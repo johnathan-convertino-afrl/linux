@@ -11,7 +11,7 @@
  *
  * Copyright (C) 2020 Analog Devices Inc.
  */
-#include "zynqmp-adrv9009-zu11eg-revb-adrv2crr-fmc-revb.dts"
+#include "zynqmp-adrv9009-zu11eg-revb-adrv2crr-fmc-revb-sync.dts"
 
 &trx0_adrv9009 {
 	compatible = "adrv9009-x4";
