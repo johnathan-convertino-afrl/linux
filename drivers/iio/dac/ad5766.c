@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
 
 #define AD5766_CMD_NOP_MUX_OUT			0x00
 #define AD5766_CMD_SDO_CNTRL			0x01
@@ -88,18 +89,55 @@ struct ad5766_chip_info {
  * @lock:		Mutex lock
  * @chip_info:		Chip model specific constants
  * @data:		Spi transfer buffers
+ * @span_range:		Current span range
  */
+
+
+enum ad5766_voltage_range {
+	AD5766_VOLTAGE_RANGE_M20V_0V,
+	AD5766_VOLTAGE_RANGE_M16V_to_0V,
+	AD5766_VOLTAGE_RANGE_M10V_to_0V,
+	AD5766_VOLTAGE_RANGE_M12V_to_14V,
+	AD5766_VOLTAGE_RANGE_M16V_to_10V,
+	AD5766_VOLTAGE_RANGE_M10V_to_6V,
+	AD5766_VOLTAGE_RANGE_M5V_to_5V,
+	AD5766_VOLTAGE_RANGE_M10V_to_10V,
+};
 
 struct ad5766_state {
 	struct spi_device		*spi;
 	struct mutex			lock;
 	const struct ad5766_chip_info 	*chip_info;
+	enum ad5766_voltage_range	span_range;
 	union {
 		u32	d32;
 		u16	w16[2];
 		u8	b8[4];
 	} data[3] ____cacheline_aligned;
 };
+
+static const char *ad5766_span_ranges[] = {
+	"-20V_to_0V",
+	"-16V_to_0V",
+	"-10V_to_0V",
+	"-12V_to_14V",
+	"-16V_to_10V",
+	"-10V_to_6V",
+	"-5V_to_5V",
+	"-10V_to_10V",
+	NULL
+};
+
+static int _ad5766_spi_write(struct ad5766_state *st,
+			     u8 command,
+			     u16 data)
+{
+	st->data[0].b8[0] = command;
+	st->data[0].b8[1] = (data & 0xFF00) >> 8;
+	st->data[0].b8[2] = (data & 0x00FF) >> 0;
+
+	return spi_write(st->spi, &st->data[0].b8[0], 3);
+}
 
 static int ad5766_write_raw(struct iio_dev *indio_dev,
 			    struct iio_chan_spec const *chan,
@@ -113,9 +151,91 @@ static int ad5766_read_raw(struct iio_dev *indio_dev,
 			   int *val2,
 			   long m);
 
+static ssize_t ad5766_show_span_range(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buf)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct ad5766_state *st = iio_priv(indio_dev);
+
+	return sprintf(buf, "%s\n", ad5766_span_ranges[st->span_range]);
+}
+
+static ssize_t ad5766_set_span_range(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf,
+				     size_t len)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct ad5766_state *st = iio_priv(indio_dev);
+	long span_range;
+	int ret;
+
+	span_range = sysfs_match_string(ad5766_span_ranges, buf);
+	if (span_range < 0)
+		return span_range;
+
+	ret =_ad5766_spi_write(st, 
+			      AD5766_CMD_SW_FULL_RESET, 
+			      AD5766_FULL_RESET_CODE);
+	if (ret < 0)
+		return ret;
+
+	ret = _ad5766_spi_write(st, AD5766_CMD_SPAN_REG, span_range);
+	if (ret < 0)
+		return ret;
+
+	st->span_range = span_range;
+
+	return len;
+}
+
+static ssize_t ad5766_show_available_span_ranges(struct device *dev,
+				   		 struct device_attribute *attr,
+				   		 char *buf)
+{
+	int ret = 0, i = 0;
+
+	while (ad5766_span_ranges[i])
+	{
+		if (i > 0)
+			ret += sprintf(buf + ret, " ");
+
+		ret += sprintf(buf + ret, "%s", ad5766_span_ranges[i]);
+		i++;
+	}
+
+	ret++;
+
+	return ret;
+}
+
+static IIO_DEVICE_ATTR(span_range,
+		       0644,
+		       ad5766_show_span_range,
+		       ad5766_set_span_range,
+		       0);
+
+static IIO_DEVICE_ATTR(span_range_available,
+		       0444,
+		       ad5766_show_available_span_ranges,
+		       NULL,
+		       0);
+
+static struct attribute *ad5766_attributes[] = {
+	&iio_dev_attr_span_range.dev_attr.attr,
+	&iio_dev_attr_span_range_available.dev_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group ad5766_attribute_group = {
+	.attrs = ad5766_attributes,
+};
+
 static const struct iio_info ad5766_info = {
 	.read_raw = ad5766_read_raw,
 	.write_raw = ad5766_write_raw,
+	.attrs = &ad5766_attribute_group,
 };
 
 static DECLARE_AD576x_CHANNELS(ad5766_channels, 16);
@@ -132,21 +252,49 @@ static const struct ad5766_chip_info ad5766_chip_infos[] = {
 	},
 };
 
-static void _ad5766_get_span_range(int *min, int *max)
+static int _ad5766_get_span_range(struct iio_dev *indio_dev, int *min, int *max)
 {
-	*min = -5;
-	*max = 5;
-}
+	struct ad5766_state *st = iio_priv(indio_dev);
+	const char *buf;
+	char tmp[10];
+	int i, start, ret;
 
-static int _ad5766_spi_write(struct ad5766_state *st,
-			     u8 command,
-			     u16 data)
-{
-	st->data[0].b8[0] = command;
-	st->data[0].b8[1] = (data & 0xFF00) >> 8;
-	st->data[0].b8[2] = (data & 0x00FF) >> 0;
+	buf = ad5766_span_ranges[st->span_range];
+	start = 0;
 
-	return spi_write(st->spi, &st->data[0].b8[0], 3);
+	for (i = 0; i < strlen(buf); i++) {
+	
+		if (buf[i] == '_' && start == 0) {
+			strncpy(tmp, buf + start, i - start);
+
+			/* strncpy doesn't NULL-terminates the tmp
+			* if the source exceeds (i - start) bytes.
+			* we substract 1 in order to get rid of 'V'
+			*/
+			tmp[i - start - 1] = 0;
+
+			ret = kstrtol(tmp, 10, (long*)min);
+			if (ret)
+				return ret;
+		} 
+
+		if (i == strlen(buf) - 1) {
+			strncpy(tmp, buf + start, i - start);
+
+			/* strncpy doesn't NULL-terminates the tmp
+			* if the source exceeds (i - start) bytes.
+			*/
+			tmp[i - start] = 0;
+			ret = kstrtol(tmp, 10, (long*)max);
+			if (ret)
+				return ret;
+		}
+
+		if (buf[i] == '_')
+			start = i + 1;
+	}
+
+	return 0;
 }
 
 static int ad5766_write(struct iio_dev *indio_dev, u8 dac, u16 data)
@@ -241,23 +389,33 @@ static int ad5766_read_raw(struct iio_dev *indio_dev,
 		return IIO_VAL_INT;
 
 	case IIO_CHAN_INFO_SCALE:
-		_ad5766_get_span_range(&min, &max);
+		ret = _ad5766_get_span_range(indio_dev, &min, &max);
+		if (ret)
+			return ret;
 		*val = max - min;
 		*val2 = indio_dev->channels->scan_type.realbits;
-		
+
 		return IIO_VAL_FRACTIONAL_LOG2;
 
 	case IIO_CHAN_INFO_OFFSET:
-		_ad5766_get_span_range(&min, &max);
+		ret = _ad5766_get_span_range(indio_dev, &min, &max);
+		if (ret)
+			return ret;
 		*val = min;
-		
+
 		return IIO_VAL_INT;
+	default:
+		return -EINVAL;
 	}
-	return -EINVAL;
+
 }
 
 static int ad5766_setup(struct ad5766_state *st)
 {
+	_ad5766_spi_write(st, AD5766_CMD_SW_FULL_RESET, AD5766_FULL_RESET_CODE);
+	_ad5766_spi_write(st, AD5766_CMD_SPAN_REG, AD5766_VOLTAGE_RANGE_M5V_to_5V);
+	st->span_range = AD5766_VOLTAGE_RANGE_M5V_to_5V;
+
 	return 0;
 }
 
