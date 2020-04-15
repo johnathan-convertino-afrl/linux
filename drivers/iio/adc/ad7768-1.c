@@ -220,16 +220,9 @@ static int ad7768_scan_direct(struct iio_dev *indio_dev,
 	struct ad7768_state *st = iio_priv(indio_dev);
 	int ret;
 
-	reinit_completion(&st->completion);
-
 	ret = ad7768_set_mode(st, AD7768_ONE_SHOT);
 	if (ret < 0)
 		return ret;
-
-	ret = wait_for_completion_timeout(&st->completion,
-					  msecs_to_jiffies(1000));
-	if (!ret)
-		return -ETIMEDOUT;
 
 	ret = ad7768_spi_reg_read(st, AD7768_REG_ADC_DATA, 3, data);
 	if (ret < 0)
