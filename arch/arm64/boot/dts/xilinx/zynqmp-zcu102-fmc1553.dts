@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Prototyping platform for LiDAR applications
+ * Link: https://wiki.analog.com/resources/eval/user-guides/ad-fmclidar1-ebz
+ *
+ * hdl_project: <ad_fmclidar1_ebz/zcu102>
+ * board_revision: <B>
+ *
+ * Copyright 2019 Analog Devices Inc.
+ */
+/dts-v1/;
+
+#include "zynqmp-zcu102-rev1.0.dts"
+#include <dt-bindings/interrupt-controller/irq.h>
+
+&i2c1 {
+	i2c-mux@75 {
+ 		i2c@0 { /* HPC0 */
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 			reg = <0>;
+ 			/* HPC0_IIC */
+ 			/*eeprom@50 { */
+ 			/*	compatible = "at24,24c64";*/
+ 			/*	reg = <0x50>; */
+ 			/*};*/
+
+ 		};
+	};
+};
+
+/ {
+	fpga_axi: fpga-axi@0 {
+		interrupt-parent = <&gic>;
+		compatible = "simple-bus";
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		ranges = <0 0 0 0xffffffff>;
+
+		axi_ad9694_adxcvr: axi-adxcvr-rx@84a50000 {
+			compatible = "adi,axi-adxcvr-1.0";
+			reg = <0x84a50000 0x1000>;
+
+			clocks = <&adc_ref_clock>;
+			clock-names = "conv";
+
+			#clock-cells = <1>;
+			clock-output-names = "adc_gt_clk", "rx_out_clk";
+
+			adi,sys-clk-select = <3>;
+			adi,out-clk-select = <3>;
+			adi,use-lpm-enable;
+		};
+
+		axi_ad9694_rx_jesd: axi-jesd204-rx@84aa0000 {
+			compatible = "adi,axi-jesd204-rx-1.0";
+			reg = <0x84aa0000 0x1000>;
+
+			interrupts = <0 107 IRQ_TYPE_LEVEL_HIGH>;
+
+			clocks = <&clk 71>, <&fpga_ref_clock>, <&axi_ad9694_adxcvr 0>;
+			clock-names = "s_axi_aclk", "device_clk", "lane_clk";
+
+			adi,octets-per-frame = <1>;
+			adi,frames-per-multiframe = <32>;
+			adi,converter-resolution = <14>;
+			adi,bits-per-sample = <16>;
+			adi,converters-per-device = <2>;
+			adi,subclass = <0>;
+
+			#clock-cells = <0>;
+			clock-output-names = "jesd_adc_lane_clk";
+		};
+
+		rx_dma: rx-dmac@9c400000 {
+			compatible = "adi,axi-dmac-1.00.a";
+			reg = <0x9c400000 0x10000>;
+			#dma-cells = <1>;
+			interrupts = <0 109 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk 71>;
+
+			adi,channels {
+				#size-cells = <0>;
+				#address-cells = <1>;
+
+				dma-channel@0 {
+					reg = <0>;
+					adi,source-bus-width = <256>;
+					adi,source-bus-type = <2>;
+					adi,destination-bus-width = <64>;
+					adi,destination-bus-type = <0>;
+				};
+			};
+		};
+
+		axi_ad9694_core: axi-ad9694-hpc@84a10000 {
+			compatible = "adi,axi-ad9694-1.0";
+			reg = <0x84a10000 0x10000>;
+			dmas = <&rx_dma 0>;
+			dma-names = "rx";
+			spibus-connected = <&ad9694>;
+			adi,axi-additional-channel-available;
+		};
+
+		axi_sysid: axi-sysid@85000000 {
+			compatible = "adi,axi-sysid-1.00.a";
+			reg = <0x85000000 0x10000>;
+		};
+	};
+};
+
+&spi0 {
+	status = "okay";
+};
+
+#define spi_adc		spi0
+
+#include "afrl-fmc1553.dtsi"

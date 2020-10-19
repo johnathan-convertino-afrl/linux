@@ -1,0 +1,75 @@
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	clocks {
+		adc_ref_clock: clock@0 {
+			#clock-cells = <0>;
+			compatible = "fixed-clock";
+			clock-frequency = <500000000>;
+			clock-output-names = "adc_ref_clock";
+		};
+    
+    fpga_ref_clock: clock@1 {
+      #clock-cells = <0>;
+			compatible = "fixed-clock";
+			clock-frequency = <250000000>;
+			clock-output-names = "fpga_ref_clock";
+		};
+	};
+
+	vref_adc: regulator-vref-adc {
+		compatible = "regulator-fixed";
+		regulator-name = "vref-adc";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+	};
+};
+
+
+&spi_adc {
+	ad9694: ad9694@1 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#clock-cells = <1>;
+		compatible = "adi,ad9694";
+
+		/* SPI Setup */
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+
+		/* Clocks */
+		clocks = <&axi_ad9694_rx_jesd>, <&adc_ref_clock>;
+		clock-names = "jesd_adc_clk", "adc_clk";
+		
+    fastdetect-a-gpios = <&gpio 112 0>; /* 34 */
+    fastdetect-b-gpios = <&gpio 113 0>; /* 35 */
+    fastdetect-c-gpios = <&gpio 114 0>; /* 36 */
+    fastdetect-d-gpios = <&gpio 115 0>; /* 37 */
+    powerdown-gpios = <&gpio 116 GPIO_ACTIVE_LOW>;  /* 38 + 78 */
+	};
+};
+
+/* use to hold gpio's at a predefined state in linux, or use UBOOT */
+&gpio {
+	//gpio_adc_pwen {
+  //  gpio-hog;
+	//	gpios = <116 0>;
+	//	output-high;
+	//	line-name = "gpio-adc-pwen";
+	//};
+  
+	//gpio_dac_pwen {
+	//	gpio-hog;
+	//	gpios = <117 0>;
+	//	output-high;
+	//	line-name = "gpio-dac-pwen";
+	//};
+  
+	gpio_clk_en_n {
+		gpio-hog;
+		gpios = <118 0>;
+		output-low;
+		line-name = "gpio-clk-en-n";
+	};
+};
