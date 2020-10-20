@@ -41,7 +41,7 @@
 			compatible = "adi,axi-adxcvr-1.0";
 			reg = <0x84a50000 0x1000>;
 
-			clocks = <&adc_ref_clock>;
+			clocks = <&fpga_ref_clock>;
 			clock-names = "conv";
 
 			#clock-cells = <1>;
@@ -58,7 +58,7 @@
 
 			interrupts = <0 107 IRQ_TYPE_LEVEL_HIGH>;
 
-			clocks = <&clk 71>, <&fpga_ref_clock>, <&axi_ad9694_adxcvr 0>;
+			clocks = <&clk 71>, <&axi_ad9694_adxcvr 1>, <&axi_ad9694_adxcvr 0>;
 			clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
 			adi,octets-per-frame = <1>;
