@@ -63,7 +63,7 @@
 
 			adi,octets-per-frame = <1>;
 			adi,frames-per-multiframe = <32>;
-			adi,converter-resolution = <14>;
+			adi,converter-resolution = <8>;
 			adi,bits-per-sample = <8>;
 			adi,converters-per-device = <2>;
 			adi,subclass = <0>;
