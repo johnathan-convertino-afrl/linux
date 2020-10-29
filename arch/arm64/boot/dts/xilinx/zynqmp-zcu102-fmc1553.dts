@@ -48,9 +48,8 @@
 			clock-output-names = "adc_gt_clk", "rx_out_clk";
 
 			adi,sys-clk-select = <3>;
-			adi,out-clk-select = <3>;
-			adi,use-lpm-enable;
-		};
+			adi,out-clk-select = <2>;
+    };
 
 		axi_ad9694_rx_jesd: axi-jesd204-rx@84aa0000 {
 			compatible = "adi,axi-jesd204-rx-1.0";
