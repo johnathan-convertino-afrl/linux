@@ -49,6 +49,7 @@
 
 			adi,sys-clk-select = <3>;
 			adi,out-clk-select = <2>;
+			adi,use-lpm-enable;
     };
 
 		axi_ad9694_rx_jesd: axi-jesd204-rx@84aa0000 {
