@@ -107,7 +107,7 @@
       reg = <0x9c420000 0x10000>;
       #dma-cells = <1>;
       interrupts = <0 108 IRQ_TYPE_LEVEL_HIGH>;
-      clocks = <&clkc 72>;
+      clocks = <&clk 72>;
 
       adi,channels {
         #size-cells = <0>;
