@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Prototyping platform for LiDAR applications
- * Link: https://wiki.analog.com/resources/eval/user-guides/ad-fmclidar1-ebz
+ * Prototyping platform for fmc1553 applications
  *
- * hdl_project: <ad_fmclidar1_ebz/zcu102>
- * board_revision: <B>
+ * hdl_project: <fmc1553/zcu102>
  *
- * Copyright 2019 Analog Devices Inc.
  */
 /dts-v1/;
 
@@ -123,15 +120,14 @@
       };
     };
     
-    // Example Driver Node, need to create a new one that uses this
-    // and does not use spi config. Port ad9739 driver? 
-    //
-    //axi_generic_lvds_dac_core: axi-generic-lvds-dac-hpc@94204000 {
-    //  compatible = "adi,axi-generic-lvds-dac-1.00.a";
-    //  reg = < 0x94204000 0x4000 >;
-    //  dmas = <&tx_dma 0>;
-    //  dma-names = "tx";
-    //};
+    axi_generic_lvds_dac_core: axi-generic-lvds-dac-hpc@94204000 {
+      compatible = "adi,axi-lvds-dac-dds-1.0";
+      reg = <0x94204000 0x4000>;
+      clocks = <&dac_sample_clock>;
+      clock-names = "sampl_clk";
+      dmas = <&tx_dma 0>;
+      dma-names = "tx";
+    };
 
 		axi_sysid: axi-sysid@85000000 {
 			compatible = "adi,axi-sysid-1.00.a";

@@ -181,6 +181,7 @@ enum {
 	ID_AD9172_M2,
 	ID_AD9172_M4,
 	ID_AD9172_M6,
+  ID_LVDS_DAC,
 };
 
 enum fifo_ctrl {

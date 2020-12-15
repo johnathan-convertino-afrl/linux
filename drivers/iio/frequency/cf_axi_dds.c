@@ -1167,6 +1167,18 @@ static struct cf_axi_dds_chip_info cf_axi_dds_chip_info_ad9361 = {
 	.scan_masks = ad9361_available_scan_masks,
 };
 
+static struct cf_axi_dds_chip_info cf_axi_dds_chip_info_lvds_dac = {
+  .name = "LVDS_DAC",
+  .channel = {
+    CF_AXI_DDS_CHAN_BUF(0),
+    CF_AXI_DDS_CHAN(0, 0, "1A"),
+    CF_AXI_DDS_CHAN(1, 0, "1B"),
+  },
+  .num_channels = 3,
+  .num_dds_channels = 2,
+  .num_buf_channels = 1,
+};
+
 static struct cf_axi_dds_chip_info cf_axi_dds_chip_info_ad9371 = {
 	.name = "AD9371",
 	.channel = {
@@ -1380,6 +1392,14 @@ static const struct axidds_core_info ad9361_6_00_a_info = {
 	.chip_info = &cf_axi_dds_chip_info_ad9361,
 };
 
+static const struct axidds_core_info lvds_dac_1_00_a_info = {
+	.version = ADI_AXI_PCORE_VER(9, 0, 'a'),
+	.standalone = true,
+	.rate = 1,
+	.data_format = ADI_DATA_FORMAT,
+  .chip_info = &cf_axi_dds_chip_info_lvds_dac,
+};
+
 static const struct axidds_core_info ad9364_6_00_a_info = {
 	.version = ADI_AXI_PCORE_VER(9, 0, 'a'),
 	.standalone = true,
@@ -1442,6 +1462,9 @@ static const struct of_device_id cf_axi_dds_of_match[] = {
 	{
 	    .compatible = "adi,axi-ad9361x2-dds-6.00.a",
 	    .data = &ad9361x2_6_00_a_info,
+	}, {
+      .compatible = "adi,axi-lvds-dac-dds-1.0",
+	    .data = &lvds_dac_1_00_a_info,
 	}, {
 	    .compatible = "adi,axi-ad9361-dds-6.00.a",
 	    .data = &ad9361_6_00_a_info,
