@@ -26,7 +26,7 @@
     dac_sample_clock: clock@3 {
       #clock-cells = <0>;
       compatible = "fixed-clock";
-      clock-frequency = <500000000>;
+      clock-frequency = <250000000>;
       clock-output-names = "dac_sample_clock";
     };
 	};
@@ -50,16 +50,16 @@
 
 		/* SPI Setup */
 		reg = <0>;
-		spi-max-frequency = <25000000>;
+		spi-max-frequency = <12500000>;
 
 		/* Clocks */
 		clocks = <&axi_ad9694_rx_jesd>, <&adc_ref_clock>;
 		clock-names = "jesd_adc_clk", "adc_clk";
 		
-    fastdetect-a-gpios = <&gpio 112 0>; /* 34 */
-    fastdetect-b-gpios = <&gpio 113 0>; /* 35 */
-    fastdetect-c-gpios = <&gpio 114 0>; /* 36 */
-    fastdetect-d-gpios = <&gpio 115 0>; /* 37 */
+    //fastdetect-a-gpios = <&gpio 112 0>; /* 34 */
+    //fastdetect-b-gpios = <&gpio 113 0>; /* 35 */
+    //fastdetect-c-gpios = <&gpio 114 0>; /* 36 */
+    //fastdetect-d-gpios = <&gpio 115 0>; /* 37 */
     powerdown-gpios = <&gpio 116 GPIO_ACTIVE_LOW>;  /* 38 + 78 */
 	};
 };
