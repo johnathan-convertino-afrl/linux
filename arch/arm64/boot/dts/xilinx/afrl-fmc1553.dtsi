@@ -56,10 +56,11 @@
 		clocks = <&axi_ad9694_rx_jesd>, <&adc_ref_clock>;
 		clock-names = "jesd_adc_clk", "adc_clk";
 		
-    //fastdetect-a-gpios = <&gpio 112 0>; /* 34 */
-    //fastdetect-b-gpios = <&gpio 113 0>; /* 35 */
-    //fastdetect-c-gpios = <&gpio 114 0>; /* 36 */
-    //fastdetect-d-gpios = <&gpio 115 0>; /* 37 */
+    adi,ac_mode;
+    adi,voltage_scale = <0x00>;
+    adi,buffer_ctrl_1 = <0x0C>;
+    adi,buffer_ctrl_2 = <0x0C>;
+    
     powerdown-gpios = <&gpio 116 GPIO_ACTIVE_LOW>;  /* 38 + 78 */
 	};
 };

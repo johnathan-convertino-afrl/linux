@@ -1165,7 +1165,11 @@ static int ad9694_setup(struct spi_device *spi)
 	unsigned int val;
 	unsigned int i;
 	int ret;
-
+  bool ac_mode;
+  bool dc_mode;
+  u8 adc_scale;
+  u8 adc_buffer_current;
+  
 	ret = ad9680_request_clks(conv);
 	if (ret)
 		return ret;
@@ -1251,7 +1255,43 @@ static int ad9694_setup(struct spi_device *spi)
 		/* Set input full-scale range to 2.16Vpp */
 		ad9680_spi_write(spi, 0x1910, 0x00);
 	}
-
+	
+  /* AC coupling enabled */
+	ac_mode = of_property_read_bool(conv->spi->dev.of_node,"adi,ac_mode");
+  
+  if(ac_mode == true) {
+    ad9680_spi_write(spi, 0x1908, 0x00);
+  }
+  
+  dc_mode = of_property_read_bool(conv->spi->dev.of_node,"adi,dc_mode");
+  
+  /* DC coupling enabled */
+  
+  if(dc_mode == true) {
+    ad9680_spi_write(spi, 0x1908, 0x04);
+  }
+	
+	/* Set ADC voltage scale if property exists */
+  ret = of_property_read_u8(conv->spi->dev.of_node,"adi,voltage_scale", &adc_scale);
+  
+  if(ret > 0) {
+    ad9680_spi_write(spi, 0x1910, adc_scale);
+  }
+  
+  /* Set ADC buffer control 1 if propery exists */
+  ret = of_property_read_u8(conv->spi->dev.of_node,"adi,buffer_ctrl_1", &adc_buffer_current);
+  
+  if(ret > 0) {
+    ad9680_spi_write(spi, 0x1A4C, adc_buffer_current);
+  }
+  
+  /* Set ADC buffer control 2 if propery exists */
+  ret = of_property_read_u8(conv->spi->dev.of_node,"adi,buffer_ctrl_2", &adc_buffer_current);
+  
+  if(ret > 0) {
+    ad9680_spi_write(spi, 0x1A4D, adc_buffer_current);
+  }
+  
 	ret = clk_prepare_enable(conv->lane_clk);
 	if (ret < 0) {
 		dev_err(&spi->dev, "Failed to enable JESD204 link: %d\n", ret);
