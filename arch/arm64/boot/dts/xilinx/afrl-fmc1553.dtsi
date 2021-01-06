@@ -57,9 +57,9 @@
 		clock-names = "jesd_adc_clk", "adc_clk";
 		
     adi,ac_mode;
-    adi,voltage_scale = <0>;
-    adi,buffer_ctrl_1 = <12>;
-    adi,buffer_ctrl_2 = <12>;
+    adi,voltage_scale = <0x00>;
+    adi,buffer_ctrl_1 = <0x0c>;
+    adi,buffer_ctrl_2 = <0x0c>;
     
     powerdown-gpios = <&gpio 116 GPIO_ACTIVE_LOW>;  /* 38 + 78 */
 	};

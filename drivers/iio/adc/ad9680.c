@@ -1280,7 +1280,7 @@ static int ad9694_setup(struct spi_device *spi)
 	
 	if(ret == 0) {
 		ad9680_spi_write(spi, 0x1910, adc_scale);
-		dev_info(&conv->spi->dev, "%s VOLTAGE SCALE: %d\n",
+		dev_info(&conv->spi->dev, "%s VOLTAGE SCALE: 0x%X\n",
 						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694", adc_scale);
 	}
 	
@@ -1290,7 +1290,7 @@ static int ad9694_setup(struct spi_device *spi)
 	
 	if(ret == 0) {
 		ad9680_spi_write(spi, 0x1A4C, adc_buffer_current);
-		dev_info(&conv->spi->dev, "%s BUFFER CTRL 1: %d\n",
+		dev_info(&conv->spi->dev, "%s BUFFER CTRL 1: 0x%X\n",
 						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694",
 						 adc_buffer_current);
 	}
@@ -1301,7 +1301,7 @@ static int ad9694_setup(struct spi_device *spi)
 	
 	if(ret == 0) {
 		ad9680_spi_write(spi, 0x1A4D, adc_buffer_current);
-		dev_info(&conv->spi->dev, "%s BUFFER CTRL 2: %d\n",
+		dev_info(&conv->spi->dev, "%s BUFFER CTRL 2: 0x%X\n",
 						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694",
 						 adc_buffer_current);
 	}
