@@ -50,7 +50,7 @@
 
 		/* SPI Setup */
 		reg = <0>;
-		spi-max-frequency = <12500000>;
+		spi-max-frequency = <25000000>;
 
 		/* Clocks */
 		clocks = <&axi_ad9694_rx_jesd>, <&adc_ref_clock>;
