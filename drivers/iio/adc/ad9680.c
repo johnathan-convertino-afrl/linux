@@ -1167,8 +1167,8 @@ static int ad9694_setup(struct spi_device *spi)
 	int ret;
 	bool ac_mode;
 	bool dc_mode;
-	u8 adc_scale;
-	u8 adc_buffer_current;
+	u32 adc_scale;
+	u32 adc_buffer_current;
   
 	ret = ad9680_request_clks(conv);
 	if (ret)
@@ -1261,35 +1261,49 @@ static int ad9694_setup(struct spi_device *spi)
 	
 	if(ac_mode == true) {
 		ad9680_spi_write(spi, 0x1908, 0x00);
+		dev_info(&conv->spi->dev, "%s AC MODE\n", 
+						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694");
 	}
 	
 	dc_mode = of_property_read_bool(conv->spi->dev.of_node,"adi,dc_mode");
 	
 	/* DC coupling enabled */
-	
 	if(dc_mode == true) {
 		ad9680_spi_write(spi, 0x1908, 0x04);
+		dev_info(&conv->spi->dev, "%s DC MODE\n",
+						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694");
 	}
 	
 	/* Set ADC voltage scale if property exists */
-	ret = of_property_read_u8(conv->spi->dev.of_node,"adi,voltage_scale", &adc_scale);
+	ret = of_property_read_u32(conv->spi->dev.of_node,
+														"adi,voltage_scale", &adc_scale);
 	
-	if(ret > 0) {
+	if(ret == 0) {
 		ad9680_spi_write(spi, 0x1910, adc_scale);
+		dev_info(&conv->spi->dev, "%s VOLTAGE SCALE: %d\n",
+						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694", adc_scale);
 	}
 	
 	/* Set ADC buffer control 1 if propery exists */
-	ret = of_property_read_u8(conv->spi->dev.of_node,"adi,buffer_ctrl_1", &adc_buffer_current);
+	ret = of_property_read_u32(conv->spi->dev.of_node,
+														"adi,buffer_ctrl_1", &adc_buffer_current);
 	
-	if(ret > 0) {
+	if(ret == 0) {
 		ad9680_spi_write(spi, 0x1A4C, adc_buffer_current);
+		dev_info(&conv->spi->dev, "%s BUFFER CTRL 1: %d\n",
+						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694",
+						 adc_buffer_current);
 	}
 	
 	/* Set ADC buffer control 2 if propery exists */
-	ret = of_property_read_u8(conv->spi->dev.of_node,"adi,buffer_ctrl_2", &adc_buffer_current);
+	ret = of_property_read_u32(conv->spi->dev.of_node,
+														"adi,buffer_ctrl_2", &adc_buffer_current);
 	
-	if(ret > 0) {
+	if(ret == 0) {
 		ad9680_spi_write(spi, 0x1A4D, adc_buffer_current);
+		dev_info(&conv->spi->dev, "%s BUFFER CTRL 2: %d\n",
+						 (conv->id == CHIPID_AD9094) ? "AD9094" : "AD9694",
+						 adc_buffer_current);
 	}
   
 	ret = clk_prepare_enable(conv->lane_clk);
@@ -1488,6 +1502,10 @@ static int ad9680_probe(struct spi_device *spi)
 	
 	/* Multiple trys to find ID, this allows power supply to stabilize */
 	do {
+		/* Reset spi each time */
+		ad9680_spi_write(spi, 0x0000, 0x81);
+		
+		/* wait for reset to complete (5 ms) */
 		mdelay(10);
 		
 		conv->id = ad9680_spi_read(spi, AD9680_REG_CHIP_ID_LOW);
