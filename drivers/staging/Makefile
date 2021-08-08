@@ -53,3 +53,4 @@ obj-$(CONFIG_CRYPTO_DEV_CCREE)	+= ccree/
 obj-$(CONFIG_DRM_VBOXVIDEO)	+= vboxvideo/
 obj-$(CONFIG_PI433)		+= pi433/
 obj-$(CONFIG_XROE_FRAMER)	+= xroeframer/
+obj-$(CONFIG_XIL_AXIS_FIFO)	+= axis-fifo/

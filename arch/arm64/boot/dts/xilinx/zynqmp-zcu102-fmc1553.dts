@@ -33,6 +33,44 @@
 		#address-cells = <0x1>;
 		#size-cells = <0x1>;
 		ranges = <0 0 0 0xffffffff>;
+		
+    mil_1553_axi_fifo: axi_fifo_mm_s@83c00000 {
+        compatible = "xlnx,axi-fifo-mm-s-4.1";
+        interrupt-parent = <&gic>;
+        interrupts = <0 110 IRQ_TYPE_LEVEL_HIGH>;
+        reg = <0x83c00000 0x10000>;
+        xlnx,axi-str-rxd-protocol = "XIL_AXI_STREAM_ETH_DATA";
+        xlnx,axi-str-rxd-tdata-width = <0x20>;
+        xlnx,axi-str-txc-protocol = "XIL_AXI_STREAM_ETH_CTRL";
+        xlnx,axi-str-txc-tdata-width = <0x20>;
+        xlnx,axi-str-txd-protocol = "XIL_AXI_STREAM_ETH_DATA";
+        xlnx,axi-str-txd-tdata-width = <0x20>;
+        xlnx,axis-tdest-width = <0x4>;
+        xlnx,axis-tid-width = <0x4>;
+        xlnx,axis-tuser-width = <0x4>;
+        xlnx,data-interface-type = <0x0>;
+        xlnx,has-axis-tdest = <0x0>;
+        xlnx,has-axis-tid = <0x0>;
+        xlnx,has-axis-tkeep = <0x1>;
+        xlnx,has-axis-tstrb = <0x0>;
+        xlnx,has-axis-tuser = <0x0>;
+        xlnx,rx-fifo-depth = <0x200>;
+        xlnx,rx-fifo-pe-threshold = <0x5>;
+        xlnx,rx-fifo-pf-threshold = <0x1fb>;
+        xlnx,s-axi-id-width = <0x4>;
+        xlnx,s-axi4-data-width = <0x20>;
+        xlnx,select-xpm = <0x0>;
+        xlnx,tx-fifo-depth = <0x200>;
+        xlnx,tx-fifo-pe-threshold = <0x5>;
+        xlnx,tx-fifo-pf-threshold = <0x1fb>;
+        xlnx,use-rx-cut-through = <0x0>;
+        xlnx,use-rx-data = <0x1>;
+        xlnx,use-tx-ctrl = <0x0>;
+        xlnx,use-tx-cut-through = <0x0>;
+        xlnx,use-tx-data = <0x1>;
+        xlnx,tx-max-pkt-size = <257>; 
+        xlnx,rx-min-pkt-size = <255>; 
+    };
 
 		axi_ad9694_adxcvr: axi-adxcvr-rx@84a50000 {
 			compatible = "adi,axi-adxcvr-1.0";
