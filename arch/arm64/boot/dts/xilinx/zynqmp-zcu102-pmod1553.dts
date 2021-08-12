@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Prototyping platform for pmod1553 applications
+ *
+ * hdl_project: <fifo_pmod1553/zcu102>
+ *
+ */
+/dts-v1/;
+
+#include "zynqmp-zcu102-rev1.0.dts"
+#include <dt-bindings/interrupt-controller/irq.h>
+
+&i2c1 {
+	i2c-mux@75 {
+ 		i2c@0 { /* HPC0 */
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 			reg = <0>;
+ 			/* HPC0_IIC */
+ 			/*eeprom@50 { */
+ 			/*	compatible = "at24,24c64";*/
+ 			/*	reg = <0x50>; */
+ 			/*};*/
+
+ 		};
+	};
+};
+
+/ {
+	fpga_axi: fpga-axi@0 {
+		interrupt-parent = <&gic>;
+		compatible = "simple-bus";
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		ranges = <0 0 0 0xffffffff>;
+		
+    mil_1553_axi_fifo: axi_fifo_mm_s@83c00000 {
+        compatible = "xlnx,axi-fifo-mm-s-4.1";
+        interrupt-parent = <&gic>;
+        interrupts = <0 109 IRQ_TYPE_LEVEL_HIGH>;
+        reg = <0x83c00000 0x10000>;
+        xlnx,axi-str-rxd-protocol = "XIL_AXI_STREAM_ETH_DATA";
+        xlnx,axi-str-rxd-tdata-width = <0x20>;
+        xlnx,axi-str-txc-protocol = "XIL_AXI_STREAM_ETH_CTRL";
+        xlnx,axi-str-txc-tdata-width = <0x20>;
+        xlnx,axi-str-txd-protocol = "XIL_AXI_STREAM_ETH_DATA";
+        xlnx,axi-str-txd-tdata-width = <0x20>;
+        xlnx,axis-tdest-width = <0x4>;
+        xlnx,axis-tid-width = <0x4>;
+        xlnx,axis-tuser-width = <0x4>;
+        xlnx,data-interface-type = <0x0>;
+        xlnx,has-axis-tdest = <0x0>;
+        xlnx,has-axis-tid = <0x0>;
+        xlnx,has-axis-tkeep = <0x1>;
+        xlnx,has-axis-tstrb = <0x0>;
+        xlnx,has-axis-tuser = <0x0>;
+        xlnx,rx-fifo-depth = <0x200>;
+        xlnx,rx-fifo-pe-threshold = <0x5>;
+        xlnx,rx-fifo-pf-threshold = <0x1fb>;
+        xlnx,s-axi-id-width = <0x4>;
+        xlnx,s-axi4-data-width = <0x20>;
+        xlnx,select-xpm = <0x0>;
+        xlnx,tx-fifo-depth = <0x200>;
+        xlnx,tx-fifo-pe-threshold = <0x5>;
+        xlnx,tx-fifo-pf-threshold = <0x1fb>;
+        xlnx,use-rx-cut-through = <0x0>;
+        xlnx,use-rx-data = <0x1>;
+        xlnx,use-tx-ctrl = <0x0>;
+        xlnx,use-tx-cut-through = <0x0>;
+        xlnx,use-tx-data = <0x1>;
+        xlnx,tx-max-pkt-size = <257>; 
+        xlnx,rx-min-pkt-size = <255>; 
+    };
+
+		axi_sysid: axi-sysid@85000000 {
+			compatible = "adi,axi-sysid-1.00.a";
+			reg = <0x85000000 0x10000>;
+		};
+	};
+};
