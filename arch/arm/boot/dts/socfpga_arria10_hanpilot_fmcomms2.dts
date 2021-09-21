@@ -91,11 +91,10 @@
         interrupt-parent = <&intc>;
         interrupts = <0 35 IRQ_TYPE_LEVEL_HIGH>;
         clocks = <&sys_clk>;
-        clock-frequency = <400000>;
+        clock-frequency = <100000>;
         #address-cells = <1>;
         #size-cells = <0>;
         fifo-size = <128>;
-
       };
 			
       sys_gpio_bd: sys-gpio-bd@10 {
@@ -216,3 +215,13 @@
 	/*adi,axi-half-dac-rate-enable;*/
 	adi,bb-clk-change-dig-tune-enable;
 };
+
+
+&ad7291 {
+  reg = <0x20>;
+};
+
+&eeprom {
+  reg = <0x53>;
+};
+
