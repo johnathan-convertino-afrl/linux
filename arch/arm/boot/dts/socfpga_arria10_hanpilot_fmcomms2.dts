@@ -96,21 +96,6 @@
         #size-cells = <0>;
         fifo-size = <128>;
 
-        eeprom@50 {
-          compatible = "at24,24c02";
-          reg = <0x50>;
-        };
-
-        eeprom@54 {
-          compatible = "at24,24c02";
-          reg = <0x54>;
-        };
-
-        ad7291@2f {
-          compatible = "adi,ad7291";
-          reg = <0x2f>;
-        };
-
       };
 			
       sys_gpio_bd: sys-gpio-bd@10 {
@@ -210,7 +195,6 @@
 
 
 #define fmc_spi sys_spi
-#define fmc_i2c i2c0
 
 #include "adi-fmcomms2.dtsi"
 
