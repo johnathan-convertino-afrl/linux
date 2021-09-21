@@ -216,13 +216,19 @@
 
 &adc0_ad9361 {
 	/delete-property/ spi-cpha;
-
+	
+	adi,rx-data-delay = <0>;
+  adi,rx-data-clock-delay = <0>;
+  adi,lvds-bias-mV = <200>;
+  
+  /* adi,lvds-rx-onchip-termination-enable; */
+  
 	/* GPIO */
 	reset-gpios = <&sys_gpio_out 14 0>;
 	sync-gpios = <&sys_gpio_out 13 0>;
 	en_agc-gpios = <&sys_gpio_out 12 0>;
 
 	/* AXI Converter */
-	adi,axi-half-dac-rate-enable;
+	/*adi,axi-half-dac-rate-enable;*/
 	adi,bb-clk-change-dig-tune-enable;
 };
