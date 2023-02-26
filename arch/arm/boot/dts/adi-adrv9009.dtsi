@@ -1,7 +1,5 @@
 
 #include <dt-bindings/iio/frequency/ad9528.h>
-#include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/interrupt-controller/irq.h>
 
 / {
 	clocks {

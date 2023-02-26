@@ -13,6 +13,7 @@
 /dts-v1/;
 #include "socfpga_arria10_socdk.dtsi"
 #include <dt-bindings/iio/frequency/ad9528.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 
 &mmc {
 	status = "okay";

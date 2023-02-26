@@ -5,7 +5,7 @@
 * https://wiki.analog.com/resources/tools-software/linux-drivers/iio-transceiver/adrv9009
 * https://wiki.analog.com/resources/tools-software/linux-software/adrv9009_advanced_plugin
 *
-* hdl_project: <adrv9009/a10soc>
+* hdl_project: <adrv9009/hanpilot>
 * board_revision: <>
 *
 * Copyright (C) 2019 Analog Devices Inc.
@@ -17,12 +17,9 @@
 
 &mmc {
   status = "okay";
-  num-slots = <1>;
   cap-sd-highspeed;
   broken-cd;
   bus-width = <4>;
-  altr,dw-mshc-ciu-div = <3>;
-  altr,dw-mshc-sdr-timing = <0 3>;
 };
 
 &eccmgr {
@@ -91,7 +88,7 @@
         compatible = "altr,spi-1.0";
         reg = <0x00000040 0x00000020>;
         interrupt-parent = <&intc>;
-        interrupts = <0 26 4>;
+        interrupts = <0 26 IRQ_TYPE_LEVEL_HIGH>;
         #address-cells = <0x1>;
         #size-cells = <0x0>;
       };
