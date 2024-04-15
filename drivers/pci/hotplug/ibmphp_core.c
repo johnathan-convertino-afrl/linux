@@ -50,14 +50,6 @@ static int irqs[16];    /* PIC mode IRQs we're using so far (in case MPS
 
 static int init_flag;
 
-/*
-static int get_max_adapter_speed_1 (struct hotplug_slot *, u8 *, u8);
-
-static inline int get_max_adapter_speed (struct hotplug_slot *hs, u8 *value)
-{
-	return get_max_adapter_speed_1 (hs, value, 1);
-}
-*/
 static inline int get_cur_bus_info(struct slot **sl)
 {
 	int rc = 1;
@@ -247,11 +239,8 @@ static int set_attention_status(struct hotplug_slot *hotplug_slot, u8 value)
 			break;
 		}
 		if (rc == 0) {
-			pslot = hotplug_slot->private;
-			if (pslot)
-				rc = ibmphp_hpc_writeslot(pslot, cmd);
-			else
-				rc = -ENODEV;
+			pslot = to_slot(hotplug_slot);
+			rc = ibmphp_hpc_writeslot(pslot, cmd);
 		}
 	} else
 		rc = -ENODEV;
@@ -273,19 +262,15 @@ static int get_attention_status(struct hotplug_slot *hotplug_slot, u8 *value)
 
 	ibmphp_lock_operations();
 	if (hotplug_slot) {
-		pslot = hotplug_slot->private;
-		if (pslot) {
-			memcpy(&myslot, pslot, sizeof(struct slot));
-			rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
-						&(myslot.status));
-			if (!rc)
-				rc = ibmphp_hpc_readslot(pslot,
-						READ_EXTSLOTSTATUS,
-						&(myslot.ext_status));
-			if (!rc)
-				*value = SLOT_ATTN(myslot.status,
-						myslot.ext_status);
-		}
+		pslot = to_slot(hotplug_slot);
+		memcpy(&myslot, pslot, sizeof(struct slot));
+		rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
+					 &myslot.status);
+		if (!rc)
+			rc = ibmphp_hpc_readslot(pslot, READ_EXTSLOTSTATUS,
+						 &myslot.ext_status);
+		if (!rc)
+			*value = SLOT_ATTN(myslot.status, myslot.ext_status);
 	}
 
 	ibmphp_unlock_operations();
@@ -303,14 +288,12 @@ static int get_latch_status(struct hotplug_slot *hotplug_slot, u8 *value)
 					(ulong) hotplug_slot, (ulong) value);
 	ibmphp_lock_operations();
 	if (hotplug_slot) {
-		pslot = hotplug_slot->private;
-		if (pslot) {
-			memcpy(&myslot, pslot, sizeof(struct slot));
-			rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
-						&(myslot.status));
-			if (!rc)
-				*value = SLOT_LATCH(myslot.status);
-		}
+		pslot = to_slot(hotplug_slot);
+		memcpy(&myslot, pslot, sizeof(struct slot));
+		rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
+					 &myslot.status);
+		if (!rc)
+			*value = SLOT_LATCH(myslot.status);
 	}
 
 	ibmphp_unlock_operations();
@@ -330,14 +313,12 @@ static int get_power_status(struct hotplug_slot *hotplug_slot, u8 *value)
 					(ulong) hotplug_slot, (ulong) value);
 	ibmphp_lock_operations();
 	if (hotplug_slot) {
-		pslot = hotplug_slot->private;
-		if (pslot) {
-			memcpy(&myslot, pslot, sizeof(struct slot));
-			rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
-						&(myslot.status));
-			if (!rc)
-				*value = SLOT_PWRGD(myslot.status);
-		}
+		pslot = to_slot(hotplug_slot);
+		memcpy(&myslot, pslot, sizeof(struct slot));
+		rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
+					 &myslot.status);
+		if (!rc)
+			*value = SLOT_PWRGD(myslot.status);
 	}
 
 	ibmphp_unlock_operations();
@@ -357,18 +338,16 @@ static int get_adapter_present(struct hotplug_slot *hotplug_slot, u8 *value)
 					(ulong) hotplug_slot, (ulong) value);
 	ibmphp_lock_operations();
 	if (hotplug_slot) {
-		pslot = hotplug_slot->private;
-		if (pslot) {
-			memcpy(&myslot, pslot, sizeof(struct slot));
-			rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
-						&(myslot.status));
-			if (!rc) {
-				present = SLOT_PRESENT(myslot.status);
-				if (present == HPC_SLOT_EMPTY)
-					*value = 0;
-				else
-					*value = 1;
-			}
+		pslot = to_slot(hotplug_slot);
+		memcpy(&myslot, pslot, sizeof(struct slot));
+		rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
+					 &myslot.status);
+		if (!rc) {
+			present = SLOT_PRESENT(myslot.status);
+			if (present == HPC_SLOT_EMPTY)
+				*value = 0;
+			else
+				*value = 1;
 		}
 	}
 
@@ -382,7 +361,7 @@ static int get_max_bus_speed(struct slot *slot)
 	int rc = 0;
 	u8 mode = 0;
 	enum pci_bus_speed speed;
-	struct pci_bus *bus = slot->hotplug_slot->pci_slot->bus;
+	struct pci_bus *bus = slot->hotplug_slot.pci_slot->bus;
 
 	debug("%s - Entry slot[%p]\n", __func__, slot);
 
@@ -413,69 +392,6 @@ static int get_max_bus_speed(struct slot *slot)
 	debug("%s - Exit rc[%d] speed[%x]\n", __func__, rc, speed);
 	return rc;
 }
-
-/*
-static int get_max_adapter_speed_1(struct hotplug_slot *hotplug_slot, u8 *value, u8 flag)
-{
-	int rc = -ENODEV;
-	struct slot *pslot;
-	struct slot myslot;
-
-	debug("get_max_adapter_speed_1 - Entry hotplug_slot[%lx] pvalue[%lx]\n",
-						(ulong)hotplug_slot, (ulong) value);
-
-	if (flag)
-		ibmphp_lock_operations();
-
-	if (hotplug_slot && value) {
-		pslot = hotplug_slot->private;
-		if (pslot) {
-			memcpy(&myslot, pslot, sizeof(struct slot));
-			rc = ibmphp_hpc_readslot(pslot, READ_SLOTSTATUS,
-						&(myslot.status));
-
-			if (!(SLOT_LATCH (myslot.status)) &&
-					(SLOT_PRESENT (myslot.status))) {
-				rc = ibmphp_hpc_readslot(pslot,
-						READ_EXTSLOTSTATUS,
-						&(myslot.ext_status));
-				if (!rc)
-					*value = SLOT_SPEED(myslot.ext_status);
-			} else
-				*value = MAX_ADAPTER_NONE;
-		}
-	}
-
-	if (flag)
-		ibmphp_unlock_operations();
-
-	debug("get_max_adapter_speed_1 - Exit rc[%d] value[%x]\n", rc, *value);
-	return rc;
-}
-
-static int get_bus_name(struct hotplug_slot *hotplug_slot, char *value)
-{
-	int rc = -ENODEV;
-	struct slot *pslot = NULL;
-
-	debug("get_bus_name - Entry hotplug_slot[%lx]\n", (ulong)hotplug_slot);
-
-	ibmphp_lock_operations();
-
-	if (hotplug_slot) {
-		pslot = hotplug_slot->private;
-		if (pslot) {
-			rc = 0;
-			snprintf(value, 100, "Bus %x", pslot->bus);
-		}
-	} else
-		rc = -ENODEV;
-
-	ibmphp_unlock_operations();
-	debug("get_bus_name - Exit rc[%d] value[%x]\n", rc, *value);
-	return rc;
-}
-*/
 
 /****************************************************************************
  * This routine will initialize the ops data structure used in the validate
@@ -582,28 +498,9 @@ static int validate(struct slot *slot_cur, int opn)
  ****************************************************************************/
 int ibmphp_update_slot_info(struct slot *slot_cur)
 {
-	struct hotplug_slot_info *info;
-	struct pci_bus *bus = slot_cur->hotplug_slot->pci_slot->bus;
-	int rc;
+	struct pci_bus *bus = slot_cur->hotplug_slot.pci_slot->bus;
 	u8 bus_speed;
 	u8 mode;
-
-	info = kmalloc(sizeof(struct hotplug_slot_info), GFP_KERNEL);
-	if (!info)
-		return -ENOMEM;
-
-	info->power_status = SLOT_PWRGD(slot_cur->status);
-	info->attention_status = SLOT_ATTN(slot_cur->status,
-						slot_cur->ext_status);
-	info->latch_status = SLOT_LATCH(slot_cur->status);
-	if (!SLOT_PRESENT(slot_cur->status)) {
-		info->adapter_status = 0;
-/*		info->max_adapter_speed_status = MAX_ADAPTER_NONE; */
-	} else {
-		info->adapter_status = 1;
-/*		get_max_adapter_speed_1(slot_cur->hotplug_slot,
-					&info->max_adapter_speed_status, 0); */
-	}
 
 	bus_speed = slot_cur->bus_on->current_speed;
 	mode = slot_cur->bus_on->current_bus_mode;
@@ -630,9 +527,7 @@ int ibmphp_update_slot_info(struct slot *slot_cur)
 	bus->cur_bus_speed = bus_speed;
 	// To do: bus_names
 
-	rc = pci_hp_change_slot_info(slot_cur->hotplug_slot, info);
-	kfree(info);
-	return rc;
+	return 0;
 }
 
 
@@ -673,7 +568,7 @@ static void free_slots(void)
 
 	list_for_each_entry_safe(slot_cur, next, &ibmphp_slot_head,
 				 ibm_slot_list) {
-		pci_hp_del(slot_cur->hotplug_slot);
+		pci_hp_del(&slot_cur->hotplug_slot);
 		slot_cur->ctrl = NULL;
 		slot_cur->bus_on = NULL;
 
@@ -683,9 +578,7 @@ static void free_slots(void)
 		 */
 		ibmphp_unconfigure_card(&slot_cur, -1);
 
-		pci_hp_destroy(slot_cur->hotplug_slot);
-		kfree(slot_cur->hotplug_slot->info);
-		kfree(slot_cur->hotplug_slot);
+		pci_hp_destroy(&slot_cur->hotplug_slot);
 		kfree(slot_cur);
 	}
 	debug("%s -- exit\n", __func__);
@@ -1007,7 +900,7 @@ static int enable_slot(struct hotplug_slot *hs)
 	ibmphp_lock_operations();
 
 	debug("ENABLING SLOT........\n");
-	slot_cur = hs->private;
+	slot_cur = to_slot(hs);
 
 	rc = validate(slot_cur, ENABLE);
 	if (rc) {
@@ -1095,8 +988,7 @@ static int enable_slot(struct hotplug_slot *hs)
 
 	slot_cur->func = kzalloc(sizeof(struct pci_func), GFP_KERNEL);
 	if (!slot_cur->func) {
-		/* We cannot do update_slot_info here, since no memory for
-		 * kmalloc n.e.ways, and update_slot_info allocates some */
+		/* do update_slot_info here? */
 		rc = -ENOMEM;
 		goto error_power;
 	}
@@ -1169,7 +1061,7 @@ error_power:
 **************************************************************/
 static int ibmphp_disable_slot(struct hotplug_slot *hotplug_slot)
 {
-	struct slot *slot = hotplug_slot->private;
+	struct slot *slot = to_slot(hotplug_slot);
 	int rc;
 
 	ibmphp_lock_operations();
@@ -1259,7 +1151,7 @@ error:
 	goto exit;
 }
 
-struct hotplug_slot_ops ibmphp_hotplug_slot_ops = {
+const struct hotplug_slot_ops ibmphp_hotplug_slot_ops = {
 	.set_attention_status =		set_attention_status,
 	.enable_slot =			enable_slot,
 	.disable_slot =			ibmphp_disable_slot,
@@ -1268,9 +1160,6 @@ struct hotplug_slot_ops ibmphp_hotplug_slot_ops = {
 	.get_attention_status =		get_attention_status,
 	.get_latch_status =		get_latch_status,
 	.get_adapter_status =		get_adapter_present,
-/*	.get_max_adapter_speed =	get_max_adapter_speed,
-	.get_bus_name_status =		get_bus_name,
-*/
 };
 
 static void ibmphp_unload(void)
@@ -1313,8 +1202,6 @@ static int __init ibmphp_init(void)
 	memcpy(ibmphp_pci_bus, bus, sizeof(*ibmphp_pci_bus));
 
 	ibmphp_debug = debug;
-
-	ibmphp_hpc_initvars();
 
 	for (i = 0; i < 16; i++)
 		irqs[i] = 0;

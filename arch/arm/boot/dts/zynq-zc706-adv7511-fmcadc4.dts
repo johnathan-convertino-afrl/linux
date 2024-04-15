@@ -2,11 +2,12 @@
 
 #include "zynq-zc706.dtsi"
 #include "zynq-zc706-adv7511.dtsi"
+#include <dt-bindings/jesd204/adxcvr.h>
 
 &fpga_axi {
 	rx_dma0: rx-dmac@7c400000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c400000 0x10000>;
+		reg = <0x7c400000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -48,7 +49,7 @@
 
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&clkc 16>, <&axi_adxcvr 1>, <&axi_adxcvr 0>;
+		clocks = <&clkc 15>, <&axi_adxcvr 1>, <&axi_adxcvr 0>;
 		clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
 		#clock-cells = <0>;
@@ -68,8 +69,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "adc_gt_clk", "rx_out_clk";
 
-		adi,sys-clk-select = <3>;
-		adi,out-clk-select = <4>;
+		adi,sys-clk-select = <XCVR_QPLL>;
+		adi,out-clk-select = <XCVR_REFCLK_DIV2>;
 		adi,use-lpm-enable;
 	};
 };

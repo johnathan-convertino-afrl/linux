@@ -130,20 +130,6 @@
 #define V4L2_CID_XILINX_HLS_MODEL		(V4L2_CID_XILINX_HLS + 1)
 
 /*
- * Xilinx MIPI CSI2 Rx Subsystem
- */
-
-/* Base ID */
-#define V4L2_CID_XILINX_MIPICSISS		(V4L2_CID_USER_BASE + 0xc080)
-
-/* Active Lanes */
-#define V4L2_CID_XILINX_MIPICSISS_ACT_LANES	(V4L2_CID_XILINX_MIPICSISS + 1)
-/* Frames received since streaming is set */
-#define V4L2_CID_XILINX_MIPICSISS_FRAME_COUNTER	(V4L2_CID_XILINX_MIPICSISS + 2)
-/* Reset all event counters */
-#define V4L2_CID_XILINX_MIPICSISS_RESET_COUNTERS (V4L2_CID_XILINX_MIPICSISS + 3)
-
-/*
  * Xilinx Gamma Correction IP
  */
 
@@ -212,4 +198,46 @@
 
 /* Low latency mode */
 #define V4L2_CID_XILINX_LOW_LATENCY		(V4L2_CID_XILINX_VIP + 1)
+
+/* Control values to enable/disable low latency capture mode */
+#define XVIP_LOW_LATENCY_ENABLE		BIT(1)
+#define XVIP_LOW_LATENCY_DISABLE	BIT(2)
+
+/* Control value to start DMA */
+#define XVIP_START_DMA			BIT(3)
+
+/*
+ * Xilinx SCD
+ */
+
+/* Base ID */
+#define V4L2_CID_XILINX_SCD			(V4L2_CID_USER_BASE + 0xc140)
+
+/*
+ * SCD Threshold
+ * User can pass percentage as an integer to tune threshold value
+ */
+#define V4L2_CID_XILINX_SCD_THRESHOLD		(V4L2_CID_XILINX_SCD + 1)
+
+/*
+ * Xilinx Video ISP Pipeline IP
+ */
+
+/* Base ID */
+#define V4L2_CID_XILINX_ISP			(V4L2_CID_USER_BASE + 0xc160)
+/* Adjust Red Gain */
+#define V4L2_CID_XILINX_ISP_RED_GAIN		(V4L2_CID_XILINX_ISP + 1)
+/* Adjust Blue Gain */
+#define V4L2_CID_XILINX_ISP_BLUE_GAIN		(V4L2_CID_XILINX_ISP + 2)
+/* Adjust AWB */
+#define V4L2_CID_XILINX_ISP_AWB			(V4L2_CID_XILINX_ISP + 3)
+/* Adjust Threshold */
+#define V4L2_CID_XILINX_ISP_THRESHOLD		(V4L2_CID_XILINX_ISP + 4)
+/* Adjust Red Gamma */
+#define V4L2_CID_XILINX_ISP_RED_GAMMA		(V4L2_CID_XILINX_ISP + 5)
+/* Adjust Green Gamma */
+#define V4L2_CID_XILINX_ISP_GREEN_GAMMA		(V4L2_CID_XILINX_ISP + 6)
+/* Adjust Blue Gamma */
+#define V4L2_CID_XILINX_ISP_BLUE_GAMMA		(V4L2_CID_XILINX_ISP + 7)
+
 #endif /* __UAPI_XILINX_V4L2_CONTROLS_H__ */

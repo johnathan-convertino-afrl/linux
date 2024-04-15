@@ -112,18 +112,25 @@ static inline struct xgamma_dev *to_xg(struct v4l2_subdev *subdev)
 
 static struct v4l2_mbus_framefmt *
 __xg_get_pad_format(struct xgamma_dev *xg,
-		    struct v4l2_subdev_pad_config *cfg,
+		    struct v4l2_subdev_state *sd_state,
 		    unsigned int pad, u32 which)
 {
+	struct v4l2_mbus_framefmt *format;
+
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(
-					&xg->xvip.subdev, cfg, pad);
+		format = v4l2_subdev_get_try_format(&xg->xvip.subdev, sd_state,
+						    pad);
+		break;
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return &xg->formats[pad];
+		format = &xg->formats[pad];
+		break;
 	default:
-		return NULL;
+		format = NULL;
+		break;
 	}
+
+	return format;
 }
 
 static void xg_set_lut_entries(struct xgamma_dev *xg,
@@ -173,23 +180,32 @@ static const struct v4l2_subdev_video_ops xg_video_ops = {
 };
 
 static int xg_get_format(struct v4l2_subdev *subdev,
-			 struct v4l2_subdev_pad_config *cfg,
+			 struct v4l2_subdev_state *sd_state,
 			 struct v4l2_subdev_format *fmt)
 {
 	struct xgamma_dev *xg = to_xg(subdev);
+	struct v4l2_mbus_framefmt *format;
 
-	fmt->format = *__xg_get_pad_format(xg, cfg, fmt->pad, fmt->which);
+	format = __xg_get_pad_format(xg, sd_state, fmt->pad, fmt->which);
+	if (!format)
+		return -EINVAL;
+
+	fmt->format = *format;
+
 	return 0;
 }
 
 static int xg_set_format(struct v4l2_subdev *subdev,
-			 struct v4l2_subdev_pad_config *cfg,
+			 struct v4l2_subdev_state *sd_state,
 			 struct v4l2_subdev_format *fmt)
 {
 	struct xgamma_dev *xg = to_xg(subdev);
 	struct v4l2_mbus_framefmt *__format;
 
-	__format = __xg_get_pad_format(xg, cfg, fmt->pad, fmt->which);
+	__format = __xg_get_pad_format(xg, sd_state, fmt->pad, fmt->which);
+	if (!__format)
+		return -EINVAL;
+
 	*__format = fmt->format;
 
 	if (fmt->pad == XVIP_PAD_SINK) {
@@ -206,7 +222,11 @@ static int xg_set_format(struct v4l2_subdev *subdev,
 
 	fmt->format = *__format;
 	/* Propagate to Source Pad */
-	__format = __xg_get_pad_format(xg, cfg, XVIP_PAD_SOURCE, fmt->which);
+	__format = __xg_get_pad_format(xg, sd_state, XVIP_PAD_SOURCE,
+				       fmt->which);
+	if (!__format)
+		return -EINVAL;
+
 	*__format = fmt->format;
 	return 0;
 }
@@ -216,10 +236,10 @@ static int xg_open(struct v4l2_subdev *subdev, struct v4l2_subdev_fh *fh)
 	struct xgamma_dev *xg = to_xg(subdev);
 	struct v4l2_mbus_framefmt *format;
 
-	format = v4l2_subdev_get_try_format(subdev, fh->pad, XVIP_PAD_SINK);
+	format = v4l2_subdev_get_try_format(subdev, fh->state, XVIP_PAD_SINK);
 	*format = xg->default_formats[XVIP_PAD_SINK];
 
-	format = v4l2_subdev_get_try_format(subdev, fh->pad, XVIP_PAD_SOURCE);
+	format = v4l2_subdev_get_try_format(subdev, fh->state, XVIP_PAD_SOURCE);
 	*format = xg->default_formats[XVIP_PAD_SOURCE];
 	return 0;
 }
@@ -439,6 +459,8 @@ static int xg_probe(struct platform_device *pdev)
 	if (rval < 0)
 		return rval;
 	rval = xvip_init_resources(&xg->xvip);
+	if (rval)
+		return -EIO;
 
 	dev_dbg(xg->xvip.dev, "Reset Xilinx Video Gamma Corrrection");
 	gpiod_set_value_cansleep(xg->rst_gpio, XGAMMA_RESET_DEASSERT);

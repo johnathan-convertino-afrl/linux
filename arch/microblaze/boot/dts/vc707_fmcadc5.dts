@@ -1,9 +1,29 @@
-
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Analog Devices AD-FMCADC5-EBZ
+ * https://wiki.analog.com/resources/eval/user-guides/ad-fmcadc5-ebz
+ *
+ * hdl_project: <fmcadc5/vc707>
+ * board_revision: <>
+ *
+ * Copyright (C) 2014-2021 Analog Devices Inc.
+ */
 /dts-v1/;
+
 #include "vc707.dtsi"
+#include <dt-bindings/jesd204/adxcvr.h>
 
 #define fmc_i2c fmc1_hpc_iic
 #define fmc_spi axi_spi
+
+/ {
+	model = "Analog Devices AD-FMCADC5-EBZ @Xilinx/vc707";
+};
+
+/* fmcadc5_vc707: updated 2019_R2 */
+&axi_intc {
+	xlnx,kind-of-intr = <0xffff85d0>;
+};
 
 / {
 	clocks {
@@ -74,9 +94,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "ad50_gt_clk", "rx_out0_clk";
 
-		adi,sys-clk-select = <0>;
-		adi,out-clk-select = <2>;
-		adi,use-cpll-enable;
+		adi,sys-clk-select = <XCVR_CPLL>;
+		adi,out-clk-select = <XCVR_OUTCLK_PMA>;
 		adi,use-lpm-enable;
 	};
 	axi_ad9625_1_core: axi-ad9625-1@44b10000 {
@@ -108,9 +127,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "adc1_gt_clk", "rx_out1_clk";
 
-		adi,sys-clk-select = <0>;
-		adi,out-clk-select = <2>;
-		adi,use-cpll-enable;
+		adi,sys-clk-select = <XCVR_CPLL>;
+		adi,out-clk-select = <XCVR_OUTCLK_PMA>;
 		adi,use-lpm-enable;
 	};
 	axi_ad9625_dma: axi_dmac@7c420000 {
@@ -120,19 +138,6 @@
 		reg = <0x7c420000 0x10000>;
 		#dma-cells = <1>;
 		clocks = <&clk_bus_0>;
-
-		adi,channels {
-			#size-cells = <0>;
-			#address-cells = <1>;
-
-			dma-channel@0 {
-				reg = <0>;
-				adi,source-bus-width = <64>;
-				adi,source-bus-type = <1>;
-				adi,destination-bus-width = <64>;
-				adi,destination-bus-type = <0>;
-			};
-		};
 	};
 };
 

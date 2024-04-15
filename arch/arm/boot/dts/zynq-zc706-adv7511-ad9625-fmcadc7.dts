@@ -1,5 +1,6 @@
 /dts-v1/;
 
+#include <dt-bindings/jesd204/adxcvr.h>
 #include "zynq-zc706.dtsi"
 #include "zynq-zc706-adv7511.dtsi"
 
@@ -79,11 +80,6 @@
 			compatible = "at24,24c02";
 			reg = <0x50>;
 		};
-
-		eeprom@54 {
-			compatible = "at24,24c02";
-			reg = <0x54>;
-		};
 	};
 
 	i2c@6 { /* LPC IIC */
@@ -94,18 +90,13 @@
 			compatible = "at24,24c02";
 			reg = <0x50>;
 		};
-
-		eeprom@54 {
-			compatible = "at24,24c02";
-			reg = <0x54>;
-		};
 	};
 };
 
 &fpga_axi {
 	rx_dma: rx-dmac@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -150,9 +141,7 @@
 		clock-names = "adc_clk";
 		clock-output-names = "adc_gt_clk";
 
-		adi,rx-sys-clk-select = <0>;
-		adi,rx-out-clk-select = <2>;
-		adi,use-cpll-enable;
-		adi,lanes = <8>;
+		adi,sys-clk-select = <XCVR_CPLL>;
+		adi,out-clk-select = <XCVR_OUTCLK_PMA>;
 	} ;
 };

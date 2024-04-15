@@ -1,19 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * ZynqMP DP Subsystem Driver
+ * ZynqMP DisplayPort Subsystem Driver
  *
- *  Copyright (C) 2017 - 2018 Xilinx, Inc.
+ * Copyright (C) 2017 - 2020 Xilinx, Inc.
  *
- *  Author: Hyun Woo Kwon <hyun.kwon@xilinx.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Authors:
+ * - Hyun Woo Kwon <hyun.kwon@xilinx.com>
+ * - Laurent Pinchart <laurent.pinchart@ideasonboard.com>
  */
 
 #include <linux/component.h>
@@ -28,6 +21,9 @@
 #include "zynqmp_disp.h"
 #include "zynqmp_dp.h"
 #include "zynqmp_dpsub.h"
+
+#define DP_PCM_NAME_0 "zynqmp_dp_snd_pcm0"
+#define DP_PCM_NAME_1 "zynqmp_dp_snd_pcm1"
 
 static int
 zynqmp_dpsub_bind(struct device *dev, struct device *master, void *data)
@@ -56,6 +52,12 @@ zynqmp_dpsub_unbind(struct device *dev, struct device *master, void *data)
 static const struct component_ops zynqmp_dpsub_component_ops = {
 	.bind	= zynqmp_dpsub_bind,
 	.unbind	= zynqmp_dpsub_unbind,
+};
+
+static struct of_dev_auxdata zynqmp_dpsub_auxdata_lookup[] = {
+	OF_DEV_AUXDATA("xlnx,dp-snd-pcm0", 0, DP_PCM_NAME_0, NULL),
+	OF_DEV_AUXDATA("xlnx,dp-snd-pcm1", 0, DP_PCM_NAME_1, NULL),
+	{ /* end of table */ }
 };
 
 static int zynqmp_dpsub_probe(struct platform_device *pdev)
@@ -91,16 +93,19 @@ static int zynqmp_dpsub_probe(struct platform_device *pdev)
 	of_reserved_mem_device_init(&pdev->dev);
 
 	/* Populate the sound child nodes */
-	ret = of_platform_populate(pdev->dev.of_node, NULL, NULL, &pdev->dev);
+	ret = of_platform_populate(pdev->dev.of_node, NULL,
+				   zynqmp_dpsub_auxdata_lookup, &pdev->dev);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to populate child nodes\n");
 		goto err_rmem;
 	}
 
-	dpsub->master = xlnx_drm_pipeline_init(pdev);
-	if (IS_ERR(dpsub->master)) {
-		dev_err(&pdev->dev, "failed to initialize the drm pipeline\n");
-		goto err_populate;
+	if (!dpsub->external_crtc_attached) {
+		dpsub->master = xlnx_drm_pipeline_init(pdev);
+		if (IS_ERR(dpsub->master)) {
+			dev_err(&pdev->dev, "failed to initialize the drm pipeline\n");
+			goto err_populate;
+		}
 	}
 
 	dev_info(&pdev->dev, "ZynqMP DisplayPort Subsystem driver probed");
@@ -126,7 +131,8 @@ static int zynqmp_dpsub_remove(struct platform_device *pdev)
 	struct zynqmp_dpsub *dpsub = platform_get_drvdata(pdev);
 	int err, ret = 0;
 
-	xlnx_drm_pipeline_exit(dpsub->master);
+	if (!dpsub->external_crtc_attached)
+		xlnx_drm_pipeline_exit(dpsub->master);
 	of_platform_depopulate(&pdev->dev);
 	of_reserved_mem_device_release(&pdev->dev);
 	component_del(&pdev->dev, &zynqmp_dpsub_component_ops);
@@ -141,7 +147,7 @@ static int zynqmp_dpsub_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(&pdev->dev);
 
-	return err;
+	return ret;
 }
 
 static int __maybe_unused zynqmp_dpsub_pm_suspend(struct device *dev)
@@ -168,7 +174,7 @@ static int __maybe_unused zynqmp_dpsub_pm_resume(struct device *dev)
 
 static const struct dev_pm_ops zynqmp_dpsub_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(zynqmp_dpsub_pm_suspend,
-			zynqmp_dpsub_pm_resume)
+				zynqmp_dpsub_pm_resume)
 };
 
 static const struct of_device_id zynqmp_dpsub_of_match[] = {
@@ -182,8 +188,8 @@ static struct platform_driver zynqmp_dpsub_driver = {
 	.remove			= zynqmp_dpsub_remove,
 	.driver			= {
 		.name		= "zynqmp-display",
+		.pm		= &zynqmp_dpsub_pm_ops,
 		.of_match_table	= zynqmp_dpsub_of_match,
-		.pm             = &zynqmp_dpsub_pm_ops,
 	},
 };
 

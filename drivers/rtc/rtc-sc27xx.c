@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2017 Spreadtrum Communications Inc.
  *
- * SPDX-License-Identifier: GPL-2.0
  */
 
 #include <linux/bitops.h>
@@ -129,19 +129,6 @@ static int sprd_rtc_clear_alarm_ints(struct sprd_rtc *rtc)
 			    SPRD_RTC_ALM_INT_MASK);
 }
 
-static int sprd_rtc_disable_ints(struct sprd_rtc *rtc)
-{
-	int ret;
-
-	ret = regmap_update_bits(rtc->regmap, rtc->base + SPRD_RTC_INT_EN,
-				 SPRD_RTC_INT_MASK, 0);
-	if (ret)
-		return ret;
-
-	return regmap_write(rtc->regmap, rtc->base + SPRD_RTC_INT_CLR,
-			    SPRD_RTC_INT_MASK);
-}
-
 static int sprd_rtc_lock_alarm(struct sprd_rtc *rtc, bool lock)
 {
 	int ret;
@@ -151,7 +138,7 @@ static int sprd_rtc_lock_alarm(struct sprd_rtc *rtc, bool lock)
 	if (ret)
 		return ret;
 
-	val &= ~(SPRD_RTC_ALMLOCK_MASK | SPRD_RTC_POWEROFF_ALM_FLAG);
+	val &= ~SPRD_RTC_ALMLOCK_MASK;
 	if (lock)
 		val |= SPRD_RTC_ALM_LOCK;
 	else
@@ -172,7 +159,8 @@ static int sprd_rtc_lock_alarm(struct sprd_rtc *rtc, bool lock)
 		return ret;
 	}
 
-	return 0;
+	return regmap_write(rtc->regmap, rtc->base + SPRD_RTC_INT_CLR,
+			    SPRD_RTC_SPG_UPD_EN);
 }
 
 static int sprd_rtc_get_secs(struct sprd_rtc *rtc, enum sprd_rtc_reg_types type,
@@ -311,33 +299,6 @@ static int sprd_rtc_set_secs(struct sprd_rtc *rtc, enum sprd_rtc_reg_types type,
 			    sts_mask);
 }
 
-static int sprd_rtc_read_aux_alarm(struct device *dev, struct rtc_wkalrm *alrm)
-{
-	struct sprd_rtc *rtc = dev_get_drvdata(dev);
-	time64_t secs;
-	u32 val;
-	int ret;
-
-	ret = sprd_rtc_get_secs(rtc, SPRD_RTC_AUX_ALARM, &secs);
-	if (ret)
-		return ret;
-
-	rtc_time64_to_tm(secs, &alrm->time);
-
-	ret = regmap_read(rtc->regmap, rtc->base + SPRD_RTC_INT_EN, &val);
-	if (ret)
-		return ret;
-
-	alrm->enabled = !!(val & SPRD_RTC_AUXALM_EN);
-
-	ret = regmap_read(rtc->regmap, rtc->base + SPRD_RTC_INT_RAW_STS, &val);
-	if (ret)
-		return ret;
-
-	alrm->pending = !!(val & SPRD_RTC_AUXALM_EN);
-	return 0;
-}
-
 static int sprd_rtc_set_aux_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
 	struct sprd_rtc *rtc = dev_get_drvdata(dev);
@@ -427,12 +388,9 @@ static int sprd_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	u32 val;
 
 	/*
-	 * If aie_timer is enabled, we should get the normal alarm time.
-	 * Otherwise we should get auxiliary alarm time.
+	 * The RTC core checks to see if there is an alarm already set in RTC
+	 * hardware, and we always read the normal alarm at this time.
 	 */
-	if (rtc->rtc && rtc->rtc->aie_timer.enabled == 0)
-		return sprd_rtc_read_aux_alarm(dev, alrm);
-
 	ret = sprd_rtc_get_secs(rtc, SPRD_RTC_ALARM, &secs);
 	if (ret)
 		return ret;
@@ -571,8 +529,34 @@ static int sprd_rtc_check_power_down(struct sprd_rtc *rtc)
 	 * means the RTC has been powered down, so the RTC time values are
 	 * invalid.
 	 */
-	rtc->valid = val == SPRD_RTC_POWER_RESET_VALUE ? false : true;
+	rtc->valid = val != SPRD_RTC_POWER_RESET_VALUE;
 	return 0;
+}
+
+static int sprd_rtc_check_alarm_int(struct sprd_rtc *rtc)
+{
+	u32 val;
+	int ret;
+
+	ret = regmap_read(rtc->regmap, rtc->base + SPRD_RTC_SPG_VALUE, &val);
+	if (ret)
+		return ret;
+
+	/*
+	 * The SPRD_RTC_INT_EN register is not put in always-power-on region
+	 * supplied by VDDRTC, so we should check if we need enable the alarm
+	 * interrupt when system booting.
+	 *
+	 * If we have set SPRD_RTC_POWEROFF_ALM_FLAG which is saved in
+	 * always-power-on region, that means we have set one alarm last time,
+	 * so we should enable the alarm interrupt to help RTC core to see if
+	 * there is an alarm already set in RTC hardware.
+	 */
+	if (!(val & SPRD_RTC_POWEROFF_ALM_FLAG))
+		return 0;
+
+	return regmap_update_bits(rtc->regmap, rtc->base + SPRD_RTC_INT_EN,
+				  SPRD_RTC_ALARM_EN, SPRD_RTC_ALARM_EN);
 }
 
 static int sprd_rtc_probe(struct platform_device *pdev)
@@ -596,10 +580,8 @@ static int sprd_rtc_probe(struct platform_device *pdev)
 	}
 
 	rtc->irq = platform_get_irq(pdev, 0);
-	if (rtc->irq < 0) {
-		dev_err(&pdev->dev, "failed to get RTC irq number\n");
+	if (rtc->irq < 0)
 		return rtc->irq;
-	}
 
 	rtc->rtc = devm_rtc_allocate_device(&pdev->dev);
 	if (IS_ERR(rtc->rtc))
@@ -608,10 +590,10 @@ static int sprd_rtc_probe(struct platform_device *pdev)
 	rtc->dev = &pdev->dev;
 	platform_set_drvdata(pdev, rtc);
 
-	/* clear all RTC interrupts and disable all RTC interrupts */
-	ret = sprd_rtc_disable_ints(rtc);
+	/* check if we need set the alarm interrupt */
+	ret = sprd_rtc_check_alarm_int(rtc);
 	if (ret) {
-		dev_err(&pdev->dev, "failed to disable RTC interrupts\n");
+		dev_err(&pdev->dev, "failed to check RTC alarm interrupt\n");
 		return ret;
 	}
 
@@ -631,22 +613,17 @@ static int sprd_rtc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	device_init_wakeup(&pdev->dev, 1);
+
 	rtc->rtc->ops = &sprd_rtc_ops;
 	rtc->rtc->range_min = 0;
 	rtc->rtc->range_max = 5662310399LL;
-	ret = rtc_register_device(rtc->rtc);
+	ret = devm_rtc_register_device(rtc->rtc);
 	if (ret) {
-		dev_err(&pdev->dev, "failed to register rtc device\n");
+		device_init_wakeup(&pdev->dev, 0);
 		return ret;
 	}
 
-	device_init_wakeup(&pdev->dev, 1);
-	return 0;
-}
-
-static int sprd_rtc_remove(struct platform_device *pdev)
-{
-	device_init_wakeup(&pdev->dev, 0);
 	return 0;
 }
 
@@ -662,7 +639,6 @@ static struct platform_driver sprd_rtc_driver = {
 		.of_match_table = sprd_rtc_of_match,
 	},
 	.probe	= sprd_rtc_probe,
-	.remove = sprd_rtc_remove,
 };
 module_platform_driver(sprd_rtc_driver);
 

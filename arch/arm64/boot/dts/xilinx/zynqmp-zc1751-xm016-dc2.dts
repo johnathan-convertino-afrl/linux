@@ -2,7 +2,7 @@
 /*
  * dts file for Xilinx ZynqMP zc1751-xm016-dc2
  *
- * (C) Copyright 2015 - 2018, Xilinx, Inc.
+ * (C) Copyright 2015 - 2021, Xilinx, Inc.
  *
  * Michal Simek <michal.simek@xilinx.com>
  */
@@ -19,10 +19,7 @@
 	compatible = "xlnx,zynqmp-zc1751", "xlnx,zynqmp";
 
 	aliases {
-		can0 = &can0;
-		can1 = &can1;
 		ethernet0 = &gem2;
-		gpio0 = &gpio;
 		i2c0 = &i2c0;
 		rtc0 = &rtc;
 		serial0 = &uart0;
@@ -93,7 +90,7 @@
 	phy-mode = "rgmii-id";
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_gem2_default>;
-	phy0: phy@5 {
+	phy0: ethernet-phy@5 {
 		reg = <5>;
 		ti,rx-internal-delay = <0x8>;
 		ti,tx-internal-delay = <0xa>;
@@ -112,8 +109,8 @@
 	pinctrl-names = "default", "gpio";
 	pinctrl-0 = <&pinctrl_i2c0_default>;
 	pinctrl-1 = <&pinctrl_i2c0_gpio>;
-	scl-gpios = <&gpio 6 GPIO_ACTIVE_HIGH>;
-	sda-gpios = <&gpio 7 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio 6 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+	sda-gpios = <&gpio 7 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 
 	tca6416_u26: gpio@20 {
 		compatible = "ti,tca6416";
@@ -139,6 +136,12 @@
 		reg = <0x0>;
 		#address-cells = <0x2>;
 		#size-cells = <0x1>;
+		nand-ecc-mode = "hw";
+		nand-rb = <0>;
+		label = "main-storage-0";
+		nand-ecc-step-size = <1024>;
+		nand-ecc-strength = <24>;
+		nand-on-flash-bbt;
 
 		partition@0 {	/* for testing purpose */
 			label = "nand-fsbl-uboot";
@@ -169,6 +172,12 @@
 		reg = <0x1>;
 		#address-cells = <0x2>;
 		#size-cells = <0x1>;
+		nand-ecc-mode = "hw";
+		nand-rb = <0>;
+		label = "main-storage-1";
+		nand-ecc-step-size = <1024>;
+		nand-ecc-strength = <24>;
+		nand-on-flash-bbt;
 
 		partition@0 {	/* for testing purpose */
 			label = "nand1-fsbl-uboot";
@@ -208,7 +217,7 @@
 		conf {
 			groups = "can0_9_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
@@ -231,7 +240,7 @@
 		conf {
 			groups = "can1_8_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
@@ -255,7 +264,7 @@
 			groups = "i2c0_1_grp";
 			bias-pull-up;
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 	};
 
@@ -268,7 +277,7 @@
 		conf {
 			groups = "gpio0_6_grp", "gpio0_7_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 	};
 
@@ -281,7 +290,7 @@
 		conf {
 			groups = "uart0_10_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
@@ -304,7 +313,7 @@
 		conf {
 			groups = "uart1_10_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
@@ -326,19 +335,22 @@
 
 		conf {
 			groups = "usb1_0_grp";
-			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
 			pins = "MIO64", "MIO65", "MIO67";
 			bias-high-impedance;
+			drive-strength = <12>;
+			slew-rate = <SLEW_RATE_FAST>;
 		};
 
 		conf-tx {
 			pins = "MIO66", "MIO68", "MIO69", "MIO70", "MIO71",
 			       "MIO72", "MIO73", "MIO74", "MIO75";
 			bias-disable;
+			drive-strength = <4>;
+			slew-rate = <SLEW_RATE_SLOW>;
 		};
 	};
 
@@ -351,7 +363,7 @@
 		conf {
 			groups = "ethernet2_0_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
@@ -376,7 +388,7 @@
 		conf-mdio {
 			groups = "mdio2_0_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 			bias-disable;
 		};
 	};
@@ -433,7 +445,7 @@
 			groups = "spi0_0_grp";
 			bias-disable;
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		mux-cs {
@@ -459,7 +471,7 @@
 			groups = "spi1_3_grp";
 			bias-disable;
 			slew-rate = <SLEW_RATE_SLOW>;
-			io-standard = <IO_STANDARD_LVCMOS18>;
+			power-source = <IO_STANDARD_LVCMOS18>;
 		};
 
 		mux-cs {
@@ -494,7 +506,7 @@
 		reg = <0>;
 
 		partition@0 {
-			label = "data";
+			label = "spi0-data";
 			reg = <0x0 0x100000>;
 		};
 	};
@@ -514,7 +526,7 @@
 		reg = <0>;
 
 		partition@0 {
-			label = "data";
+			label = "spi1-data";
 			reg = <0x0 0x84000>;
 		};
 	};

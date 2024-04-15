@@ -16,29 +16,29 @@ static const struct nla_policy ila_nl_policy[ILA_ATTR_MAX + 1] = {
 static const struct genl_ops ila_nl_ops[] = {
 	{
 		.cmd = ILA_CMD_ADD,
+		.validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 		.doit = ila_xlat_nl_cmd_add_mapping,
-		.policy = ila_nl_policy,
 		.flags = GENL_ADMIN_PERM,
 	},
 	{
 		.cmd = ILA_CMD_DEL,
+		.validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 		.doit = ila_xlat_nl_cmd_del_mapping,
-		.policy = ila_nl_policy,
 		.flags = GENL_ADMIN_PERM,
 	},
 	{
 		.cmd = ILA_CMD_FLUSH,
+		.validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 		.doit = ila_xlat_nl_cmd_flush,
-		.policy = ila_nl_policy,
 		.flags = GENL_ADMIN_PERM,
 	},
 	{
 		.cmd = ILA_CMD_GET,
+		.validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 		.doit = ila_xlat_nl_cmd_get_mapping,
 		.start = ila_xlat_nl_dump_start,
 		.dumpit = ila_xlat_nl_dump,
 		.done = ila_xlat_nl_dump_done,
-		.policy = ila_nl_policy,
 	},
 };
 
@@ -49,11 +49,13 @@ struct genl_family ila_nl_family __ro_after_init = {
 	.name		= ILA_GENL_NAME,
 	.version	= ILA_GENL_VERSION,
 	.maxattr	= ILA_ATTR_MAX,
+	.policy = ila_nl_policy,
 	.netnsok	= true,
 	.parallel_ops	= true,
 	.module		= THIS_MODULE,
 	.ops		= ila_nl_ops,
 	.n_ops		= ARRAY_SIZE(ila_nl_ops),
+	.resv_start_op	= ILA_CMD_FLUSH + 1,
 };
 
 static __net_init int ila_init_net(struct net *net)
@@ -119,3 +121,4 @@ module_init(ila_init);
 module_exit(ila_fini);
 MODULE_AUTHOR("Tom Herbert <tom@herbertland.com>");
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("IPv6: Identifier Locator Addressing (ILA)");

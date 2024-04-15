@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Driver for Analog Devices ADV748X 8 channel analog front end (AFE) receiver
  * with standard definition processor (SDP)
  *
  * Copyright (C) 2017 Renesas Electronics Corp.
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 
 #include <linux/delay.h>
@@ -158,7 +154,7 @@ static void adv748x_afe_set_video_standard(struct adv748x_state *state,
 		   (sdpstd & 0xf) << ADV748X_SDP_VID_SEL_SHIFT);
 }
 
-static int adv748x_afe_s_input(struct adv748x_afe *afe, unsigned int input)
+int adv748x_afe_s_input(struct adv748x_afe *afe, unsigned int input)
 {
 	struct adv748x_state *state = adv748x_afe_to_state(afe);
 
@@ -286,7 +282,7 @@ static int adv748x_afe_s_stream(struct v4l2_subdev *sd, int enable)
 			goto unlock;
 	}
 
-	ret = adv748x_txb_power(state, enable);
+	ret = adv748x_tx_power(afe->tx, enable);
 	if (ret)
 		goto unlock;
 
@@ -335,7 +331,7 @@ static int adv748x_afe_propagate_pixelrate(struct adv748x_afe *afe)
 }
 
 static int adv748x_afe_enum_mbus_code(struct v4l2_subdev *sd,
-				      struct v4l2_subdev_pad_config *cfg,
+				      struct v4l2_subdev_state *sd_state,
 				      struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->index != 0)
@@ -347,7 +343,7 @@ static int adv748x_afe_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int adv748x_afe_get_format(struct v4l2_subdev *sd,
-				      struct v4l2_subdev_pad_config *cfg,
+				      struct v4l2_subdev_state *sd_state,
 				      struct v4l2_subdev_format *sdformat)
 {
 	struct adv748x_afe *afe = adv748x_sd_to_afe(sd);
@@ -358,7 +354,8 @@ static int adv748x_afe_get_format(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	if (sdformat->which == V4L2_SUBDEV_FORMAT_TRY) {
-		mbusformat = v4l2_subdev_get_try_format(sd, cfg, sdformat->pad);
+		mbusformat = v4l2_subdev_get_try_format(sd, sd_state,
+							sdformat->pad);
 		sdformat->format = *mbusformat;
 	} else {
 		adv748x_afe_fill_format(afe, &sdformat->format);
@@ -369,7 +366,7 @@ static int adv748x_afe_get_format(struct v4l2_subdev *sd,
 }
 
 static int adv748x_afe_set_format(struct v4l2_subdev *sd,
-				      struct v4l2_subdev_pad_config *cfg,
+				      struct v4l2_subdev_state *sd_state,
 				      struct v4l2_subdev_format *sdformat)
 {
 	struct v4l2_mbus_framefmt *mbusformat;
@@ -379,9 +376,9 @@ static int adv748x_afe_set_format(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	if (sdformat->which == V4L2_SUBDEV_FORMAT_ACTIVE)
-		return adv748x_afe_get_format(sd, cfg, sdformat);
+		return adv748x_afe_get_format(sd, sd_state, sdformat);
 
-	mbusformat = v4l2_subdev_get_try_format(sd, cfg, sdformat->pad);
+	mbusformat = v4l2_subdev_get_try_format(sd, sd_state, sdformat->pad);
 	*mbusformat = sdformat->format;
 
 	return 0;
@@ -523,10 +520,6 @@ int adv748x_afe_init(struct adv748x_afe *afe)
 			break;
 		}
 	}
-
-	adv748x_afe_s_input(afe, afe->input);
-
-	adv_dbg(state, "AFE Default input set to %d\n", afe->input);
 
 	/* Entity pads and sinks are 0-indexed to match the pads */
 	for (i = ADV748X_AFE_SINK_AIN0; i <= ADV748X_AFE_SINK_AIN7; i++)

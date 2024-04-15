@@ -224,6 +224,7 @@ static void a53_parse_l2merrsr_way(u8 ramid, u8 val)
 	switch (ramid) {
 	case L2_TAG_RAM:
 		pr_cont("(way %d)", val);
+		fallthrough;
 	case L2_DATA_RAM:
 		pr_cont("(bank %d)", val);
 		break;
@@ -306,7 +307,7 @@ static void cortex_arm64_edac_check(struct edac_device_ctl_info *edac_ctl)
 	cpumask_clear(&cluster_mask);
 	cpumask_clear(&old_mask);
 
-	get_online_cpus();
+	cpus_read_lock();
 	for_each_online_cpu(cpu) {
 		/* Check CPU L1 error */
 		smp_call_function_single(cpu, parse_cpumerrsr, NULL, 0);
@@ -317,7 +318,7 @@ static void cortex_arm64_edac_check(struct edac_device_ctl_info *edac_ctl)
 		/* Check CPU L2 error */
 		smp_call_function_any(&cluster_mask, parse_l2merrsr, NULL, 0);
 	}
-	put_online_cpus();
+	cpus_read_unlock();
 }
 
 static ssize_t cortexa53_edac_inject_L2_show(struct edac_device_ctl_info
@@ -431,6 +432,9 @@ static int cortex_arm64_edac_probe(struct platform_device *pdev)
 	rc = edac_device_add_device(drv->edac_ctl);
 	if (rc)
 		edac_device_free_ctl_info(drv->edac_ctl);
+
+	/* Let the users know they are using deprecated driver */
+	dev_notice(&pdev->dev, "cortex l1/l2 driver is deprecated\n");
 
 	return rc;
 }

@@ -1,34 +1,56 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2016 - 2019 Xilinx, Inc.
+ * Copyright (C) 2019 Xilinx, Inc.
  */
 
-#include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/fpga/fpga-mgr.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
-#include <linux/string.h>
 #include <linux/seq_file.h>
+#include <linux/string.h>
 #include <linux/firmware/xlnx-zynqmp.h>
 
 /* Constant Definitions */
-#define IXR_FPGA_DONE_MASK	0X00000008U
-#define IXR_FPGA_ENCRYPTION_EN	0x00000008U
+#define IXR_FPGA_DONE_MASK	BIT(3)
 
 #define READ_DMA_SIZE		0x200
 #define DUMMY_FRAMES_SIZE	0x64
-#define PCAP_READ_CLKFREQ	25000000
+#define DUMMY_PAD_BYTE		0xFF
+#define FPGA_WORD_SIZE		4
+
+/* Error Register */
+#define IXR_FPGA_ERR_CRC_ERR		BIT(0)
+#define IXR_FPGA_ERR_SECURITY_ERR	BIT(16)
+
+/* Signal Status Register */
+#define IXR_FPGA_END_OF_STARTUP		BIT(4)
+#define IXR_FPGA_GST_CFG_B		BIT(5)
+#define IXR_FPGA_INIT_B_INTERNAL	BIT(11)
+#define IXR_FPGA_DONE_INTERNAL_SIGNAL	BIT(13)
+
+#define IXR_FPGA_CONFIG_STAT_OFFSET	7U
+#define IXR_FPGA_READ_CONFIG_TYPE	0U
+
+#define XILINX_ZYNQMP_PM_FPGA_READ_BACK		BIT(6)
+#define XILINX_ZYNQMP_PM_FPGA_REG_READ_BACK	BIT(7)
+
+#define DEFAULT_FEATURE_LIST	(XILINX_ZYNQMP_PM_FPGA_FULL | \
+				 XILINX_ZYNQMP_PM_FPGA_PARTIAL | \
+				 XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_DDR | \
+				 XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_OCM | \
+				 XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_USERKEY | \
+				 XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_DEVKEY | \
+				 XILINX_ZYNQMP_PM_FPGA_READ_BACK | \
+				 XILINX_ZYNQMP_PM_FPGA_REG_READ_BACK)
 
 static bool readback_type;
 module_param(readback_type, bool, 0644);
 MODULE_PARM_DESC(readback_type,
 		 "readback_type 0-configuration register read "
 		 "1- configuration data read (default: 0)");
-
-static const struct zynqmp_eemi_ops *eemi_ops;
 
 /**
  * struct zynqmp_configreg - Configuration register offsets
@@ -66,16 +88,17 @@ static struct zynqmp_configreg cfgreg[] = {
 /**
  * struct zynqmp_fpga_priv - Private data structure
  * @dev:	Device data structure
- * @lock:	Mutex lock for device
- * @clk:	Clock resource for pcap controller
+ * @feature_list: Firmware supported feature list
+ * @version: Firmware version info. The higher 16 bytes belong to
+ *           the major version number and the lower 16 bytes belong
+ *           to a minor version number.
  * @flags:	flags which is used to identify the bitfile type
- * @size:	Size of the Bitstream used for readback
+ * @size:	Size of the Bit-stream used for readback
  */
 struct zynqmp_fpga_priv {
 	struct device *dev;
-	struct mutex lock;
-	struct clk *clk;
-	char *key;
+	u32 feature_list;
+	u32 version;
 	u32 flags;
 	u32 size;
 };
@@ -85,112 +108,232 @@ static int zynqmp_fpga_ops_write_init(struct fpga_manager *mgr,
 				      const char *buf, size_t size)
 {
 	struct zynqmp_fpga_priv *priv;
+	int  eemi_flags = 0;
 
 	priv = mgr->priv;
 	priv->flags = info->flags;
-	priv->key = info->key;
+
+	/* Update firmware flags */
+	if (priv->flags & FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_USERKEY;
+	else if (priv->flags & FPGA_MGR_ENCRYPTED_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_DEVKEY;
+	if (priv->flags & FPGA_MGR_DDR_MEM_AUTH_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_DDR;
+	else if (priv->flags & FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_OCM;
+	if (priv->flags & FPGA_MGR_PARTIAL_RECONFIG)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_PARTIAL;
+
+	/* Validate user flgas with firmware feature list */
+	if ((priv->feature_list & eemi_flags) != eemi_flags)
+		return -EINVAL;
 
 	return 0;
 }
 
 static int zynqmp_fpga_ops_write(struct fpga_manager *mgr,
-					const char *buf, size_t size)
+				 const char *buf, size_t size)
 {
 	struct zynqmp_fpga_priv *priv;
-	char *kbuf;
-	size_t dma_size;
+	int word_align, ret, index;
 	dma_addr_t dma_addr;
-	int ret;
-
-	if (!eemi_ops->fpga_load)
-		return -ENXIO;
+	u32 eemi_flags = 0;
+	size_t dma_size;
+	u32 status;
+	char *kbuf;
 
 	priv = mgr->priv;
+	word_align = size % FPGA_WORD_SIZE;
+	if (word_align)
+		word_align = FPGA_WORD_SIZE - word_align;
+
+	size = size + word_align;
 	priv->size = size;
 
-	if (!mutex_trylock(&priv->lock))
-		return -EBUSY;
-
-	ret = clk_enable(priv->clk);
-	if (ret)
-		goto err_unlock;
-
-	if (priv->flags & IXR_FPGA_ENCRYPTION_EN)
+	if (priv->flags & FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM)
 		dma_size = size + ENCRYPTED_KEY_LEN;
 	else
 		dma_size = size;
 
 	kbuf = dma_alloc_coherent(priv->dev, dma_size, &dma_addr, GFP_KERNEL);
-	if (!kbuf) {
-		ret = -ENOMEM;
-		goto disable_clk;
+	if (!kbuf)
+		return -ENOMEM;
+
+	for (index = 0; index < word_align; index++)
+		kbuf[index] = DUMMY_PAD_BYTE;
+
+	memcpy(&kbuf[index], buf, size - index);
+
+	if (priv->flags & FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM) {
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_USERKEY;
+		memcpy(kbuf + size, mgr->key, ENCRYPTED_KEY_LEN);
+	} else if (priv->flags & FPGA_MGR_ENCRYPTED_BITSTREAM) {
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_DEVKEY;
 	}
-
-	memcpy(kbuf, buf, size);
-
-	if (priv->flags & IXR_FPGA_ENCRYPTION_EN)
-		memcpy(kbuf + size, priv->key, ENCRYPTED_KEY_LEN);
 
 	wmb(); /* ensure all writes are done before initiate FW call */
 
-	if (priv->flags & IXR_FPGA_ENCRYPTION_EN)
-		ret = eemi_ops->fpga_load(dma_addr, dma_addr + size,
-					  priv->flags);
+	if (priv->flags & FPGA_MGR_DDR_MEM_AUTH_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_DDR;
+	else if (priv->flags & FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_OCM;
+
+	if (priv->flags & FPGA_MGR_PARTIAL_RECONFIG)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_PARTIAL;
+
+	if (priv->flags & FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM)
+		ret = zynqmp_pm_fpga_load(dma_addr, dma_addr + size,
+					  eemi_flags, &status);
 	else
-		ret = eemi_ops->fpga_load(dma_addr, size, priv->flags);
+		ret = zynqmp_pm_fpga_load(dma_addr, size,
+					  eemi_flags, &status);
 
 	dma_free_coherent(priv->dev, dma_size, kbuf, dma_addr);
-disable_clk:
-	clk_disable(priv->clk);
-err_unlock:
-	mutex_unlock(&priv->lock);
+
+	if (status)
+		return status;
+
 	return ret;
 }
 
-static int zynqmp_fpga_ops_write_complete(struct fpga_manager *mgr,
-					  struct fpga_image_info *info)
+static unsigned long zynqmp_fpga_get_contiguous_size(struct sg_table *sgt)
 {
-	return 0;
+	dma_addr_t expected = sg_dma_address(sgt->sgl);
+	unsigned long size = 0;
+	struct scatterlist *s;
+	unsigned int i;
+
+	for_each_sg(sgt->sgl, s, sgt->nents, i) {
+		if (sg_dma_address(s) != expected)
+			break;
+		expected = sg_dma_address(s) + sg_dma_len(s);
+		size += sg_dma_len(s);
+	}
+
+	return size;
+}
+
+static int zynqmp_fpga_ops_write_sg(struct fpga_manager *mgr,
+				    struct sg_table *sgt)
+{
+	dma_addr_t dma_addr, key_addr = 0;
+	struct zynqmp_fpga_priv *priv;
+	unsigned long contig_size;
+	u32 eemi_flags = 0;
+	u32 status;
+	char *kbuf;
+	int ret;
+
+	priv = mgr->priv;
+
+	dma_addr = sg_dma_address(sgt->sgl);
+	contig_size = zynqmp_fpga_get_contiguous_size(sgt);
+
+	if (priv->flags & FPGA_MGR_PARTIAL_RECONFIG)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_PARTIAL;
+	if (priv->flags & FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_USERKEY;
+	else if (priv->flags & FPGA_MGR_ENCRYPTED_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_ENCRYPTION_DEVKEY;
+	if (priv->flags & FPGA_MGR_DDR_MEM_AUTH_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_DDR;
+	else if (priv->flags & FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM)
+		eemi_flags |= XILINX_ZYNQMP_PM_FPGA_AUTHENTICATION_OCM;
+
+	if (priv->flags & FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM) {
+		kbuf = dma_alloc_coherent(priv->dev, ENCRYPTED_KEY_LEN,
+					  &key_addr, GFP_KERNEL);
+		if (!kbuf)
+			return -ENOMEM;
+		memcpy(kbuf, mgr->key, ENCRYPTED_KEY_LEN);
+		ret = zynqmp_pm_fpga_load(dma_addr, key_addr,
+					  eemi_flags, &status);
+		dma_free_coherent(priv->dev, ENCRYPTED_KEY_LEN, kbuf, key_addr);
+	} else {
+		ret = zynqmp_pm_fpga_load(dma_addr, contig_size,
+					  eemi_flags, &status);
+	}
+
+	if (status)
+		return status;
+
+	return ret;
 }
 
 static enum fpga_mgr_states zynqmp_fpga_ops_state(struct fpga_manager *mgr)
 {
-	u32 status;
+	u32 status = 0;
 
-	if (!eemi_ops->fpga_get_status)
-		return FPGA_MGR_STATE_UNKNOWN;
-
-	eemi_ops->fpga_get_status(&status);
+	zynqmp_pm_fpga_get_status(&status);
 	if (status & IXR_FPGA_DONE_MASK)
 		return FPGA_MGR_STATE_OPERATING;
 
 	return FPGA_MGR_STATE_UNKNOWN;
 }
 
+static u64 zynqmp_fpga_ops_status(struct fpga_manager *mgr)
+{
+	unsigned int *buf, reg_val;
+	dma_addr_t dma_addr = 0;
+	u64 status = 0;
+	int ret;
+
+	buf = dma_alloc_coherent(mgr->dev.parent, READ_DMA_SIZE,
+				 &dma_addr, GFP_KERNEL);
+	if (!buf)
+		return FPGA_MGR_STATUS_FIRMWARE_REQ_ERR;
+
+	ret = zynqmp_pm_fpga_read(IXR_FPGA_CONFIG_STAT_OFFSET, dma_addr,
+				  IXR_FPGA_READ_CONFIG_TYPE, &reg_val);
+	if (ret) {
+		status = FPGA_MGR_STATUS_FIRMWARE_REQ_ERR;
+		goto free_dmabuf;
+	}
+
+	if (reg_val & IXR_FPGA_ERR_CRC_ERR)
+		status |= FPGA_MGR_STATUS_CRC_ERR;
+	if (reg_val & IXR_FPGA_ERR_SECURITY_ERR)
+		status |= FPGA_MGR_STATUS_SECURITY_ERR;
+	if (!(reg_val & IXR_FPGA_INIT_B_INTERNAL))
+		status |= FPGA_MGR_STATUS_DEVICE_INIT_ERR;
+	if (!(reg_val & IXR_FPGA_DONE_INTERNAL_SIGNAL))
+		status |= FPGA_MGR_STATUS_SIGNAL_ERR;
+	if (!(reg_val & IXR_FPGA_GST_CFG_B))
+		status |= FPGA_MGR_STATUS_HIGH_Z_STATE_ERR;
+	if (!(reg_val & IXR_FPGA_END_OF_STARTUP))
+		status |= FPGA_MGR_STATUS_EOS_ERR;
+
+free_dmabuf:
+	dma_free_coherent(mgr->dev.parent, READ_DMA_SIZE, buf, dma_addr);
+
+	return status;
+}
+
 static int zynqmp_fpga_read_cfgreg(struct fpga_manager *mgr,
 				   struct seq_file *s)
 {
-	struct zynqmp_fpga_priv *priv = mgr->priv;
-	int ret, val;
+	int ret = 0;
+	u32 val;
 	unsigned int *buf;
-	dma_addr_t dma_addr;
+	dma_addr_t dma_addr = 0;
+	struct zynqmp_fpga_priv *priv;
 	struct zynqmp_configreg *p = cfgreg;
 
-	ret = clk_enable(priv->clk);
-	if (ret)
-		return ret;
+	priv = mgr->priv;
 
-	buf = dma_zalloc_coherent(mgr->dev.parent, READ_DMA_SIZE,
-				  &dma_addr, GFP_KERNEL);
-	if (!buf) {
-		ret = -ENOMEM;
-		goto disable_clk;
-	}
+	if (!(priv->feature_list & XILINX_ZYNQMP_PM_FPGA_READ_BACK))
+		return -EINVAL;
+
+	buf = dma_alloc_coherent(mgr->dev.parent, READ_DMA_SIZE,
+				 &dma_addr, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	seq_puts(s, "zynqMP FPGA Configuration register contents are\n");
 
 	while (p->reg) {
-		ret = eemi_ops->fpga_read(p->offset, dma_addr, readback_type,
+		ret = zynqmp_pm_fpga_read(p->offset, dma_addr, readback_type,
 					  &val);
 		if (ret)
 			goto free_dmabuf;
@@ -201,8 +344,6 @@ static int zynqmp_fpga_read_cfgreg(struct fpga_manager *mgr,
 free_dmabuf:
 	dma_free_coherent(mgr->dev.parent, READ_DMA_SIZE, buf,
 			  dma_addr);
-disable_clk:
-	clk_disable(priv->clk);
 
 	return ret;
 }
@@ -211,42 +352,26 @@ static int zynqmp_fpga_read_cfgdata(struct fpga_manager *mgr,
 				    struct seq_file *s)
 {
 	struct zynqmp_fpga_priv *priv;
-	int ret, data_offset;
+	int ret;
+	u32 data_offset;
 	unsigned int *buf;
-	dma_addr_t dma_addr;
+	dma_addr_t dma_addr = 0;
 	size_t size;
-	int clk_rate;
 
 	priv = mgr->priv;
+
+	if (!(priv->feature_list & XILINX_ZYNQMP_PM_FPGA_REG_READ_BACK))
+		return -EINVAL;
+
 	size = priv->size + READ_DMA_SIZE + DUMMY_FRAMES_SIZE;
 
-	/*
-	 * There is no h/w flow control for pcap read
-	 * to prevent the FIFO from over flowing, reduce
-	 * the PCAP operating frequency.
-	 */
-	clk_rate = clk_get_rate(priv->clk);
-	clk_unprepare(priv->clk);
-	ret = clk_set_rate(priv->clk, PCAP_READ_CLKFREQ);
-	if (ret) {
-		dev_err(&mgr->dev, "Unable to reduce the PCAP freq %d\n", ret);
-		goto prepare_clk;
-	}
-	ret = clk_prepare_enable(priv->clk);
-	if (ret) {
-		dev_err(&mgr->dev, "Cannot enable clock.\n");
-		goto restore_pcap_clk;
-	}
-
-	buf = dma_zalloc_coherent(mgr->dev.parent, size, &dma_addr,
-				  GFP_KERNEL);
-	if (!buf) {
-		ret = -ENOMEM;
-		goto disable_clk;
-	}
+	buf = dma_alloc_coherent(mgr->dev.parent, size, &dma_addr,
+				 GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	seq_puts(s, "zynqMP FPGA Configuration data contents are\n");
-	ret = eemi_ops->fpga_read((priv->size + DUMMY_FRAMES_SIZE) / 4,
+	ret = zynqmp_pm_fpga_read((priv->size + DUMMY_FRAMES_SIZE) / 4,
 				  dma_addr, readback_type, &data_offset);
 	if (ret)
 		goto free_dmabuf;
@@ -255,41 +380,28 @@ static int zynqmp_fpga_read_cfgdata(struct fpga_manager *mgr,
 
 free_dmabuf:
 	dma_free_coherent(mgr->dev.parent, size, buf, dma_addr);
-disable_clk:
-	clk_disable_unprepare(priv->clk);
-restore_pcap_clk:
-	clk_set_rate(priv->clk, clk_rate);
-prepare_clk:
-	clk_prepare(priv->clk);
 
 	return ret;
 }
 
 static int zynqmp_fpga_ops_read(struct fpga_manager *mgr, struct seq_file *s)
 {
-	struct zynqmp_fpga_priv *priv = mgr->priv;
 	int ret;
-
-	if (!eemi_ops->fpga_read)
-		return -ENXIO;
-
-	if (!mutex_trylock(&priv->lock))
-		return -EBUSY;
 
 	if (readback_type)
 		ret = zynqmp_fpga_read_cfgdata(mgr, s);
 	else
 		ret = zynqmp_fpga_read_cfgreg(mgr, s);
 
-	mutex_unlock(&priv->lock);
 	return ret;
 }
 
 static const struct fpga_manager_ops zynqmp_fpga_ops = {
 	.state = zynqmp_fpga_ops_state,
+	.status = zynqmp_fpga_ops_status,
 	.write_init = zynqmp_fpga_ops_write_init,
 	.write = zynqmp_fpga_ops_write,
-	.write_complete = zynqmp_fpga_ops_write_complete,
+	.write_sg = zynqmp_fpga_ops_write_sg,
 	.read = zynqmp_fpga_ops_read,
 };
 
@@ -297,78 +409,36 @@ static int zynqmp_fpga_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct zynqmp_fpga_priv *priv;
-	int err, ret;
 	struct fpga_manager *mgr;
-
-	eemi_ops = zynqmp_pm_get_eemi_ops();
-	if (IS_ERR(eemi_ops))
-		return PTR_ERR(eemi_ops);
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
 	priv->dev = dev;
-	mutex_init(&priv->lock);
-	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(44));
-	if (ret < 0)
-		dev_err(dev, "no usable DMA configuration");
 
-	mgr = fpga_mgr_create(dev, "Xilinx ZynqMP FPGA Manager",
-			      &zynqmp_fpga_ops, priv);
-	if (!mgr)
-		return -ENOMEM;
-
-	platform_set_drvdata(pdev, mgr);
-
-	priv->clk = devm_clk_get(dev, "ref_clk");
-	if (IS_ERR(priv->clk)) {
-		ret = PTR_ERR(priv->clk);
-		dev_err(dev, "failed to to get pcp ref_clk (%d)\n", ret);
-		return ret;
+	if (!(zynqmp_pm_fpga_get_version(&priv->version))) {
+		if (zynqmp_pm_fpga_get_feature_list(&priv->feature_list))
+			priv->feature_list = DEFAULT_FEATURE_LIST;
+	} else {
+		priv->feature_list = DEFAULT_FEATURE_LIST;
 	}
 
-	ret = clk_prepare(priv->clk);
-	if (ret) {
-		dev_err(dev, "Cannot enable clock.\n");
-		return ret;
-	}
-
-	err = fpga_mgr_register(mgr);
-	if (err) {
-		dev_err(dev, "unable to register FPGA manager");
-		fpga_mgr_free(mgr);
-		clk_unprepare(priv->clk);
-		return err;
-	}
-
-	return 0;
+	mgr = devm_fpga_mgr_register(dev, "Xilinx ZynqMP FPGA Manager",
+				     &zynqmp_fpga_ops, priv);
+	return PTR_ERR_OR_ZERO(mgr);
 }
 
-static int zynqmp_fpga_remove(struct platform_device *pdev)
-{
-	struct zynqmp_fpga_priv *priv;
-	struct fpga_manager *mgr;
-
-	mgr = platform_get_drvdata(pdev);
-	priv = mgr->priv;
-
-	fpga_mgr_unregister(mgr);
-	clk_unprepare(priv->clk);
-
-	return 0;
-}
-
+#ifdef CONFIG_OF
 static const struct of_device_id zynqmp_fpga_of_match[] = {
 	{ .compatible = "xlnx,zynqmp-pcap-fpga", },
 	{},
 };
-
 MODULE_DEVICE_TABLE(of, zynqmp_fpga_of_match);
+#endif
 
 static struct platform_driver zynqmp_fpga_driver = {
 	.probe = zynqmp_fpga_probe,
-	.remove = zynqmp_fpga_remove,
 	.driver = {
 		.name = "zynqmp_fpga_manager",
 		.of_match_table = of_match_ptr(zynqmp_fpga_of_match),

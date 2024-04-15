@@ -7,9 +7,11 @@
 #include <linux/clk.h>
 #include <linux/platform_device.h>
 #include <linux/dmaengine.h>
-
+#include <linux/bitfield.h>
+#include <linux/mod_devicetable.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
+#include <linux/iio/buffer.h>
 #include <linux/iio/buffer-dma.h>
 #include <linux/iio/buffer-dmaengine.h>
 
@@ -28,6 +30,8 @@
 #define M2K_LA_REG_TRIGGER_DELAY	0x44
 #define M2K_LA_REG_TRIGGERED		0x48
 #define M2K_LA_REG_STREAMING		0x4c
+#define M2K_LA_REG_INSTRUMENT_TRIGGER	0x54
+#define M2K_LA_REG_DATA_DELAY_CONFIG	0x58
 
 #define M2K_LA_TRIGGER_EDGE_ANY		0
 #define M2K_LA_TRIGGER_EDGE_RISING	1
@@ -37,6 +41,14 @@
 
 #define M2K_LA_TRIGGER_LOGIC_MODE_OR 0
 #define M2K_LA_TRIGGER_LOGIC_MODE_AND 1
+
+#define M2K_LA_TRIGGER_CONDITION_MASK(x)	(0x155 << x)
+#define M2K_LA_TRIGGER_SOURCE_MASK		GENMASK(19, 16)
+#define M2K_LA_TRIGGER_EXT_SOURCE_MASK		GENMASK(17, 16)
+
+#define M2K_LA_IN_DATA_DELAY_MASK		GENMASK(5, 0)
+#define M2K_LA_IN_DATA_AUTO_DELAY_MASK		BIT(8)
+#define M2K_LA_IN_DATA_DELAY_MUX_MASK		BIT(9)
 
 struct m2k_la {
 	void __iomem *regs;
@@ -67,6 +79,17 @@ static void m2k_la_write(struct m2k_la *m2k_la, unsigned int reg,
 static unsigned int m2k_la_read(struct m2k_la *m2k_la, unsigned int reg)
 {
 	return readl_relaxed(m2k_la->regs + reg);
+}
+
+static void m2k_la_update(struct m2k_la *m2k_la, unsigned int reg,
+			      unsigned int writeval, const unsigned int mask)
+{
+	unsigned int regval;
+
+	regval = m2k_la_read(m2k_la, reg);
+	regval &= ~mask;
+	writeval &= mask;
+	m2k_la_write(m2k_la, reg, writeval | regval);
 }
 
 static int m2k_la_read_raw(struct iio_dev *indio_dev,
@@ -123,7 +146,7 @@ static int m2k_la_txrx_read_raw(struct iio_dev *indio_dev,
 	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
 	unsigned int div, reg;
 
-	if (indio_dev->direction == IIO_DEVICE_DIRECTION_IN)
+	if (indio_dev->buffer->direction == IIO_BUFFER_DIRECTION_IN)
 		reg = M2K_LA_REG_DIVIDER_LA;
 	else
 		reg = M2K_LA_REG_DIVIDER_PG;
@@ -145,7 +168,7 @@ static int m2k_la_txrx_write_raw(struct iio_dev *indio_dev,
 		val = 1;
 
 	div = DIV_ROUND_UP(clk_get_rate(m2k_la->clk), val);
-	if (indio_dev->direction == IIO_DEVICE_DIRECTION_IN)
+	if (indio_dev->buffer->direction == IIO_BUFFER_DIRECTION_IN)
 		reg = M2K_LA_REG_DIVIDER_LA;
 	else
 		reg = M2K_LA_REG_DIVIDER_PG;
@@ -299,7 +322,8 @@ static const char * const m2k_la_trigger_mux_out_items[] = {
 	"trigger-in",
 	"trigger-logic-and-trigger-in",
 	"trigger-logic-or-trigger-in",
-	"trigger-logic-xor-trigger-in"
+	"trigger-logic-xor-trigger-in",
+	"disabled"
 };
 
 static const struct iio_enum m2k_la_trigger_mux_out_enum = {
@@ -373,6 +397,120 @@ static ssize_t m2k_la_get_triggered(struct iio_dev *indio_dev,
 	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
 }
 
+static int m2k_la_set_data_delay_auto(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan, unsigned int val)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+
+	mutex_lock(&m2k_la->lock);
+
+	m2k_la_update(m2k_la, M2K_LA_REG_DATA_DELAY_CONFIG,
+		      FIELD_PREP(M2K_LA_IN_DATA_AUTO_DELAY_MASK, val),
+		      M2K_LA_IN_DATA_AUTO_DELAY_MASK);
+
+	mutex_unlock(&m2k_la->lock);
+
+	return 0;
+}
+
+static int m2k_la_get_data_delay_auto(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	unsigned int val;
+
+	val = m2k_la_read(m2k_la, M2K_LA_REG_DATA_DELAY_CONFIG);
+	val = FIELD_GET(M2K_LA_IN_DATA_AUTO_DELAY_MASK, val);
+
+	return val;
+}
+
+static const char * const m2k_la_data_delay_auto_items[] = {
+	"auto",
+	"manual"
+};
+
+static const struct iio_enum m2k_la_data_delay_auto_enum = {
+	.items = m2k_la_data_delay_auto_items,
+	.num_items = ARRAY_SIZE(m2k_la_data_delay_auto_items),
+	.set = m2k_la_set_data_delay_auto,
+	.get = m2k_la_get_data_delay_auto,
+};
+
+static int m2k_la_set_rate_mux(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan, unsigned int val)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+
+	mutex_lock(&m2k_la->lock);
+
+	m2k_la_update(m2k_la, M2K_LA_REG_DATA_DELAY_CONFIG,
+		      FIELD_PREP(M2K_LA_IN_DATA_DELAY_MUX_MASK, val),
+		      M2K_LA_IN_DATA_DELAY_MUX_MASK);
+
+	mutex_unlock(&m2k_la->lock);
+
+	return 0;
+}
+
+static int m2k_la_get_rate_mux(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	unsigned int val;
+
+	val = m2k_la_read(m2k_la, M2K_LA_REG_DATA_DELAY_CONFIG);
+	val = FIELD_GET(M2K_LA_IN_DATA_DELAY_MUX_MASK, val);
+
+	return val;
+}
+
+static const char * const m2k_la_rate_mux_items[] = {
+	"logic_analyzer",
+	"oscilloscope"
+};
+
+static const struct iio_enum m2k_la_rate_mux_enum = {
+	.items = m2k_la_rate_mux_items,
+	.num_items = ARRAY_SIZE(m2k_la_rate_mux_items),
+	.set = m2k_la_set_rate_mux,
+	.get = m2k_la_get_rate_mux,
+};
+
+static ssize_t m2k_la_set_in_data_delay(struct iio_dev *indio_dev,
+	uintptr_t priv, const struct iio_chan_spec *chan, const char *buf,
+	size_t len)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	unsigned int val;
+	int ret;
+
+	ret = kstrtouint(buf, 10, &val);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&m2k_la->lock);
+
+	m2k_la_update(m2k_la, M2K_LA_REG_DATA_DELAY_CONFIG, val,
+		      M2K_LA_IN_DATA_DELAY_MASK);
+
+	mutex_unlock(&m2k_la->lock);
+
+	return len;
+}
+
+static ssize_t m2k_la_get_in_data_delay(struct iio_dev *indio_dev,
+	uintptr_t priv, const struct iio_chan_spec *chan, char *buf)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	unsigned int val;
+
+	val = m2k_la_read(m2k_la, M2K_LA_REG_DATA_DELAY_CONFIG);
+	val = FIELD_GET(M2K_LA_IN_DATA_DELAY_MASK, val);
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", val);
+}
+
 static ssize_t m2k_la_get_streaming(struct iio_dev *indio_dev,
 	uintptr_t priv, const struct iio_chan_spec *chan, char *buf)
 {
@@ -403,15 +541,23 @@ static ssize_t m2k_la_set_streaming(struct iio_dev *indio_dev,
 
 static const struct iio_chan_spec_ext_info m2k_la_rx_ext_info[] = {
 	IIO_ENUM("trigger", IIO_SEPARATE, &m2k_la_trigger_enum),
-	IIO_ENUM_AVAILABLE("trigger", &m2k_la_trigger_enum),
+	IIO_ENUM_AVAILABLE("trigger", IIO_SHARED_BY_TYPE, &m2k_la_trigger_enum),
 	IIO_ENUM("trigger_logic_mode", IIO_SHARED_BY_TYPE,
 		&m2k_la_trigger_logic_mode_enum),
-	IIO_ENUM_AVAILABLE("trigger_logic_mode",
+	IIO_ENUM_AVAILABLE("trigger_logic_mode", IIO_SHARED_BY_TYPE,
 		&m2k_la_trigger_logic_mode_enum),
 	IIO_ENUM("trigger_mux_out", IIO_SHARED_BY_TYPE,
 		&m2k_la_trigger_mux_out_enum),
-	IIO_ENUM_AVAILABLE("trigger_mux_out",
+	IIO_ENUM_AVAILABLE("trigger_mux_out", IIO_SHARED_BY_TYPE,
 		&m2k_la_trigger_mux_out_enum),
+	IIO_ENUM("data_delay_auto", IIO_SHARED_BY_ALL,
+		&m2k_la_data_delay_auto_enum),
+	IIO_ENUM_AVAILABLE("data_delay_auto", IIO_SHARED_BY_ALL,
+		&m2k_la_data_delay_auto_enum),
+	IIO_ENUM("rate_mux", IIO_SHARED_BY_ALL,
+		&m2k_la_rate_mux_enum),
+	IIO_ENUM_AVAILABLE("rate_mux", IIO_SHARED_BY_ALL,
+		&m2k_la_rate_mux_enum),
 	{
 		.name = "trigger_delay",
 		.shared = IIO_SHARED_BY_TYPE,
@@ -425,12 +571,141 @@ static const struct iio_chan_spec_ext_info m2k_la_rx_ext_info[] = {
 		.write = m2k_la_set_triggered,
 	},
 	{
+		.name = "data_in_delay",
+		.shared = IIO_SHARED_BY_ALL,
+		.read = m2k_la_get_in_data_delay,
+		.write = m2k_la_set_in_data_delay,
+	},
+	{
 		.name = "streaming",
 		.shared = IIO_SHARED_BY_ALL,
 		.write = m2k_la_set_streaming,
 		.read = m2k_la_get_streaming,
 	},
 	{}
+};
+
+static int m2k_la_set_trig_condition(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan, unsigned int val)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	int trig_src;
+
+	mutex_lock(&m2k_la->lock);
+	/* Read Trig SRC */
+	trig_src = m2k_la_read(m2k_la, M2K_LA_REG_INSTRUMENT_TRIGGER);
+	trig_src = FIELD_GET(M2K_LA_TRIGGER_EXT_SOURCE_MASK, trig_src);
+
+	if (trig_src) {
+		trig_src -= 1;
+		if (val)
+			/* Subtract 1 because of the none item. Multiply with 2
+			 * and shift with trig_src due to channel selection
+			 */
+			val = BIT(2 * (val - 1)) << trig_src;
+
+		m2k_la_update(m2k_la, M2K_LA_REG_INSTRUMENT_TRIGGER, val,
+				  M2K_LA_TRIGGER_CONDITION_MASK(trig_src));
+	}
+
+	mutex_unlock(&m2k_la->lock);
+
+	return 0;
+}
+
+static int m2k_la_get_trig_condition(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	int val, trig_src;
+
+	/* Read Trig SRC */
+	trig_src = val = m2k_la_read(m2k_la, M2K_LA_REG_INSTRUMENT_TRIGGER);
+	trig_src = FIELD_GET(M2K_LA_TRIGGER_EXT_SOURCE_MASK, trig_src);
+
+	if (trig_src) {
+		trig_src -= 1;
+		val &= M2K_LA_TRIGGER_CONDITION_MASK(trig_src);
+		return ((fls(val >> trig_src) + 1) / 2);
+	}
+
+	return 0;
+}
+
+static const char * const m2k_la_trigger_tx_items[] = {
+	"none",
+	"level-low",
+	"level-high",
+	"edge-any",
+	"edge-rising",
+	"edge-falling",
+};
+
+static const struct iio_enum m2k_la_trig_condition_enum = {
+	.items = m2k_la_trigger_tx_items,
+	.num_items = ARRAY_SIZE(m2k_la_trigger_tx_items),
+	.set = m2k_la_set_trig_condition,
+	.get = m2k_la_get_trig_condition,
+};
+
+static int m2k_la_set_trig_src(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan, unsigned int val)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+
+	mutex_lock(&m2k_la->lock);
+
+	/* reset required by HDL */
+	m2k_la_update(m2k_la, M2K_LA_REG_INSTRUMENT_TRIGGER, 0x0,
+			   M2K_LA_TRIGGER_SOURCE_MASK);
+
+	val = BIT(val) << 15;
+	m2k_la_update(m2k_la, M2K_LA_REG_INSTRUMENT_TRIGGER, val,
+			   M2K_LA_TRIGGER_SOURCE_MASK);
+
+	mutex_unlock(&m2k_la->lock);
+
+	return 0;
+}
+
+static int m2k_la_get_trig_src(struct iio_dev *indio_dev,
+	const struct iio_chan_spec *chan)
+{
+	struct m2k_la *m2k_la = iio_device_get_drvdata(indio_dev);
+	int val;
+
+	val = m2k_la_read(m2k_la, M2K_LA_REG_INSTRUMENT_TRIGGER);
+
+	if (val & M2K_LA_TRIGGER_SOURCE_MASK)
+		return fls(val) - 16;
+
+	return 0;
+}
+
+static const char * const m2k_la_trig_src_items[] = {
+	"none",
+	"trigger-i_0",
+	"trigger-i_1",
+	"trigger-adc",
+	"trigger-la",
+};
+
+static const struct iio_enum m2k_la_trig_src_enum = {
+	.items = m2k_la_trig_src_items,
+	.num_items = ARRAY_SIZE(m2k_la_trig_src_items),
+	.set = m2k_la_set_trig_src,
+	.get = m2k_la_get_trig_src,
+};
+
+static const struct iio_chan_spec_ext_info m2k_la_tx_ext_info[] = {
+	IIO_ENUM_AVAILABLE("trigger_src", IIO_SHARED_BY_ALL,
+		&m2k_la_trig_src_enum),
+	IIO_ENUM("trigger_src", IIO_SHARED_BY_ALL, &m2k_la_trig_src_enum),
+	IIO_ENUM_AVAILABLE("trigger_condition", IIO_SHARED_BY_ALL,
+		&m2k_la_trig_condition_enum),
+	IIO_ENUM("trigger_condition", IIO_SHARED_BY_ALL,
+		&m2k_la_trig_condition_enum),
+	{ },
 };
 
 static int m2k_la_set_direction(struct iio_dev *indio_dev,
@@ -585,13 +860,13 @@ static const struct iio_chan_spec_ext_info m2k_la_ext_info[] = {
 		.shared = IIO_SHARED_BY_ALL,
 	},
 	IIO_ENUM("clocksource", IIO_SHARED_BY_ALL, &m2k_la_clocksource_enum),
-	IIO_ENUM_AVAILABLE_SHARED("clocksource", IIO_SHARED_BY_ALL,
+	IIO_ENUM_AVAILABLE("clocksource", IIO_SHARED_BY_ALL,
 		&m2k_la_clocksource_enum),
 
 	IIO_ENUM("direction", IIO_SEPARATE, &m2k_la_direction_enum),
-	IIO_ENUM_AVAILABLE("direction", &m2k_la_direction_enum),
+	IIO_ENUM_AVAILABLE("direction", IIO_SHARED_BY_TYPE, &m2k_la_direction_enum),
 	IIO_ENUM("outputmode", IIO_SEPARATE, &m2k_la_output_mode_enum),
-	IIO_ENUM_AVAILABLE("outputmode", &m2k_la_output_mode_enum),
+	IIO_ENUM_AVAILABLE("outputmode", IIO_SHARED_BY_TYPE, &m2k_la_output_mode_enum),
 	{}
 };
 
@@ -603,6 +878,7 @@ static const struct iio_chan_spec_ext_info m2k_la_ext_info[] = {
 	.output = 1, \
 	.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 	.scan_index = 0, \
+	.ext_info = m2k_la_tx_ext_info, \
 	.scan_type = { \
 		.sign = 'u', \
 		.realbits = 1, \
@@ -713,26 +989,6 @@ static const struct iio_chan_spec m2k_la_rx_chan_spec[] = {
 	M2K_LA_RX_CHAN_TRIGGER(17),
 };
 
-static int m2k_la_submit_block(struct iio_dma_buffer_queue *queue,
-	struct iio_dma_buffer_block *block)
-{
-	struct iio_dev *indio_dev = queue->driver_data;
-
-	if (indio_dev->direction == IIO_DEVICE_DIRECTION_IN) {
-		block->block.bytes_used = block->block.size;
-		iio_dmaengine_buffer_submit_block(queue, block, DMA_DEV_TO_MEM);
-	} else {
-		iio_dmaengine_buffer_submit_block(queue, block, DMA_MEM_TO_DEV);
-	}
-
-	return 0;
-}
-
-static const struct iio_dma_buffer_ops m2k_la_dma_buffer_ops = {
-	.submit = m2k_la_submit_block,
-	.abort = iio_dmaengine_buffer_abort,
-};
-
 static int m2k_la_reg_access(struct iio_dev *indio_dev, unsigned int reg,
 	unsigned int writeval, unsigned int *readval)
 {
@@ -792,7 +1048,6 @@ static void m2k_la_disable_clk(void *data)
 static int m2k_la_probe(struct platform_device *pdev)
 {
 	struct iio_dev *indio_dev, *indio_dev_tx, *indio_dev_rx;
-	struct iio_buffer *buffer_tx, *buffer_rx;
 	struct m2k_la *m2k_la;
 	struct resource *mem;
 	int ret;
@@ -862,14 +1117,12 @@ static int m2k_la_probe(struct platform_device *pdev)
 	indio_dev_tx->info = &m2k_la_txrx_iio_info;
 	indio_dev_tx->channels = m2k_la_tx_chan_spec,
 	indio_dev_tx->num_channels = ARRAY_SIZE(m2k_la_tx_chan_spec);
-	indio_dev_tx->direction = IIO_DEVICE_DIRECTION_OUT;
 	indio_dev_tx->setup_ops = &m2k_la_tx_setup_ops;
 
-	buffer_tx = iio_dmaengine_buffer_alloc(&pdev->dev, "tx",
-			&m2k_la_dma_buffer_ops, indio_dev_tx);
-	if (IS_ERR(buffer_tx))
-		return PTR_ERR(buffer_tx);
-	iio_device_attach_buffer(indio_dev_tx, buffer_tx);
+	ret = devm_iio_dmaengine_buffer_setup(&pdev->dev, indio_dev_tx, "tx",
+					      IIO_BUFFER_DIRECTION_OUT);
+	if (ret)
+		return ret;
 
 	iio_device_set_drvdata(indio_dev_tx, m2k_la);
 
@@ -884,11 +1137,10 @@ static int m2k_la_probe(struct platform_device *pdev)
 	indio_dev_rx->channels = m2k_la_rx_chan_spec,
 	indio_dev_rx->num_channels = ARRAY_SIZE(m2k_la_rx_chan_spec);
 
-	buffer_rx = iio_dmaengine_buffer_alloc(&pdev->dev, "rx",
-			&m2k_la_dma_buffer_ops, indio_dev_rx);
-	if (IS_ERR(buffer_rx))
-		return PTR_ERR(buffer_rx);
-	iio_device_attach_buffer(indio_dev_rx, buffer_rx);
+	ret = devm_iio_dmaengine_buffer_setup(&pdev->dev, indio_dev_rx, "rx",
+					      IIO_BUFFER_DIRECTION_IN);
+	if (ret)
+		return ret;
 
 	iio_device_set_drvdata(indio_dev_rx, m2k_la);
 
@@ -912,3 +1164,4 @@ module_platform_driver(m2k_la_driver);
 MODULE_AUTHOR("");
 MODULE_DESCRIPTION("");
 MODULE_LICENSE("GPL v2");
+MODULE_IMPORT_NS(IIO_DMAENGINE_BUFFER);

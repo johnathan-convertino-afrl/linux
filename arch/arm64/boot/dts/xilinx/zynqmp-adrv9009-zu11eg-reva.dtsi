@@ -16,6 +16,11 @@
 #include <dt-bindings/phy/phy.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/iio/frequency/hmc7044.h>
+#include <dt-bindings/jesd204/adxcvr.h>
+
+#ifndef HMC7044_PLL2_OUTPUT_FREQUENCY
+#define HMC7044_PLL2_OUTPUT_FREQUENCY	2949120000
+#endif
 
 / {
 	model = "Analog Devices ADRV9009-ZU11EG Rev.A";
@@ -78,7 +83,7 @@
 	sda-gpios = <&gpio 15 GPIO_ACTIVE_HIGH>;
 
 	current_limiter@58 { /* U12 */
-		compatible = "adi,adm1177";
+		compatible = "adi,adm1177-iio";
 		reg = <0x58>;
 		adi,r-sense-mohm = <10>; /* 10 mOhm */
 		adi,shutdown-threshold-ma = <10000>; /* 10 A */
@@ -106,6 +111,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_sdhci1_default>;
 	no-1-8-v;
+	disable-wp;
 	xlnx,mio_bank = <1>;
 };
 
@@ -129,6 +135,37 @@
 
 &ams_pl {
 	status = "okay";
+};
+
+&qspi {
+	status = "okay";
+	is-dual = <1>;
+	num-cs = <1>;
+	primary_flash: qspi@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		spi-tx-bus-width = <1>;
+		spi-rx-bus-width = <4>;
+		compatible = "n25q512a", "jedec,spi-nor";
+		reg = <0x0>;
+		spi-max-frequency = <50000000>;
+		partition@qspi-fsbl-uboot {
+			label = "qspi-fsbl-uboot";
+			reg = <0x0 0x2000000>; /* 32M */
+		};
+		partition@qspi-uboot-env {
+			label = "qspi-uboot-env";
+			reg = <0x2000000 0x20000>; /* 128k */
+		};
+		partition@qspi-nvmfs {
+			label = "qspi-nvmfs";
+			reg = <0x2020000 0xE0000>; /* 1M */
+		};
+		partition@qspi-linux {
+			label = "qspi-linux";
+			reg = <0x2100000 0x5E00000>; /* 94M */
+		};
+	};
 };
 
 &spi0 {
@@ -177,7 +214,7 @@
 		adi,jesd204-framer-a-external-sysref = <1>;
 		adi,jesd204-framer-a-serializer-lanes-enabled = <0x03>;
 		adi,jesd204-framer-a-serializer-lane-crossbar = <0xE4>;
-		adi,jesd204-framer-a-lmfc-offset = <5>;
+		adi,jesd204-framer-a-lmfc-offset = <15>;
 		adi,jesd204-framer-a-new-sysref-on-relink = <0>;
 		adi,jesd204-framer-a-syncb-in-select = <0>;
 		adi,jesd204-framer-a-over-sample = <0>;
@@ -197,7 +234,7 @@
 		adi,jesd204-framer-b-external-sysref = <1>;
 		adi,jesd204-framer-b-serializer-lanes-enabled = <0x0C>;
 		adi,jesd204-framer-b-serializer-lane-crossbar = <0xE4>;
-		adi,jesd204-framer-b-lmfc-offset = <5>;
+		adi,jesd204-framer-b-lmfc-offset = <15>;
 		adi,jesd204-framer-b-new-sysref-on-relink = <0>;
 		adi,jesd204-framer-b-syncb-in-select = <1>;
 		adi,jesd204-framer-b-over-sample = <0>;
@@ -501,7 +538,7 @@
 		adi,tx-pa-protection-tx2-peak-threshold = <140>;
 	};
 
-	trx1_adrv9009: adrv9009-phy-b@0 {
+	trx1_adrv9009: adrv9009-phy-b@1 {
 		compatible = "adrv9009";
 		reg = <1>;
 
@@ -541,7 +578,7 @@
 		adi,jesd204-framer-a-external-sysref = <1>;
 		adi,jesd204-framer-a-serializer-lanes-enabled = <0x03>;
 		adi,jesd204-framer-a-serializer-lane-crossbar = <0xE4>;
-		adi,jesd204-framer-a-lmfc-offset = <5>;
+		adi,jesd204-framer-a-lmfc-offset = <15>;
 		adi,jesd204-framer-a-new-sysref-on-relink = <0>;
 		adi,jesd204-framer-a-syncb-in-select = <0>;
 		adi,jesd204-framer-a-over-sample = <0>;
@@ -561,7 +598,7 @@
 		adi,jesd204-framer-b-external-sysref = <1>;
 		adi,jesd204-framer-b-serializer-lanes-enabled = <0x0C>;
 		adi,jesd204-framer-b-serializer-lane-crossbar = <0xE4>;
-		adi,jesd204-framer-b-lmfc-offset = <5>;
+		adi,jesd204-framer-b-lmfc-offset = <15>;
 		adi,jesd204-framer-b-new-sysref-on-relink = <0>;
 		adi,jesd204-framer-b-syncb-in-select = <1>;
 		adi,jesd204-framer-b-over-sample = <0>;
@@ -865,7 +902,7 @@
 		adi,tx-pa-protection-tx2-peak-threshold = <140>;
 	};
 
-	hmc7044: hmc7044@0 {
+	hmc7044: hmc7044@2 {
 		#address-cells = <1>;
 		#size-cells = <0>;
 		#clock-cells = <1>;
@@ -873,18 +910,20 @@
 		reg = <2>;
 		spi-max-frequency = <10000000>;
 
-		adi,pll1-clkin-frequencies = <122880000 122880000 0 0>;
+		adi,pll1-clkin-frequencies = <30720000 30720000 0 0>;
 		adi,pll1-ref-prio-ctrl = <0xE5>; /* prefer CLKIN1 */
 
 		adi,clkin0-buffer-mode  = <0x09>;
-		adi,clkin1-buffer-mode  = <0x09>;
+		adi,clkin1-buffer-mode  = <0x0b>; // 100term, lvpecl term
 		adi,sync-pin-mode = <1>;
 
 		adi,pll1-loop-bandwidth-hz = <200>;
+		adi,pfd1-maximum-limit-frequency-hz = <30720000>;
+		adi,pll1-charge-pump-current-ua = <1920>;
 
 		adi,vcxo-frequency = <122880000>;
 
-		adi,pll2-output-frequency = <2949120000>;
+		adi,pll2-output-frequency = <HMC7044_PLL2_OUTPUT_FREQUENCY>;
 
 		adi,sysref-timer-divider = <3840>;
 		adi,pulse-generator-mode = <7>;
@@ -895,7 +934,6 @@
 		adi,gpo-controls = <0x1f 0x2b 0x00 0x00>;
 
 		adi,high-performance-mode-clock-dist-enable;
-		adi,high-performance-mode-pll-vco-enable;
 
 		clock-output-names =
 			"hmc7044_out0_DEV_REFCLK_A", "hmc7044_out1_DEV_SYSREF_A",
@@ -942,13 +980,13 @@
 			reg = <4>;
 			adi,extended-name = "JESD_REFCLK_TX_OBS_AB";
 			adi,divider = <12>;	// 245760000
-			adi,driver-mode = <HMC7044_DRIVER_MODE_LVPECL>;	// LVPECL
+			adi,driver-mode = <HMC7044_DRIVER_MODE_LVDS>;	// LVDS
 		};
 		hmc7044_c5: channel@5 {
 			reg = <5>;
 			adi,extended-name = "JESD_REFCLK_RX_AB";
 			adi,divider = <12>;	// 245760000
-			adi,driver-mode = <HMC7044_DRIVER_MODE_LVPECL>;	// LVPECL
+			adi,driver-mode = <HMC7044_DRIVER_MODE_LVDS>;	// LVDS
 		};
 		hmc7044_c6: channel@6 {
 			reg = <6>;
@@ -1026,23 +1064,23 @@
 
 	pinctrl_uart1_default: uart1-default {
 		mux {
-			groups = "uart1_5_grp";
+			groups = "uart1_4_grp";
 			function = "uart1";
 		};
 
 		conf {
-			groups = "uart1_5_grp";
+			groups = "uart1_4_grp";
 			slew-rate = <SLEW_RATE_SLOW>;
 			io-standard = <IO_STANDARD_LVCMOS18>;
 		};
 
 		conf-rx {
-			pins = "MIO21";
+			pins = "MIO17";
 			bias-high-impedance;
 		};
 
 		conf-tx {
-			pins = "MIO20";
+			pins = "MIO16";
 			bias-disable;
 		};
 	};
@@ -1185,10 +1223,9 @@
 			#clock-cells = <1>;
 			clock-output-names = "rx_gt_clk", "rx_out_clk";
 
-			adi,sys-clk-select = <0>;
-			adi,out-clk-select = <3>;
+			adi,sys-clk-select = <XCVR_CPLL>;
+			adi,out-clk-select = <XCVR_REFCLK>;
 			adi,use-lpm-enable;
-			adi,use-cpll-enable;
 		};
 
 		axi_adrv9009_rx_jesd: axi-jesd204-rx@84a50000 {
@@ -1219,10 +1256,9 @@
 			#clock-cells = <1>;
 			clock-output-names = "rx_os_gt_clk", "rx_os_out_clk";
 
-			adi,sys-clk-select = <0>;
-			adi,out-clk-select = <3>;
+			adi,sys-clk-select = <XCVR_CPLL>;
+			adi,out-clk-select = <XCVR_REFCLK>;
 			adi,use-lpm-enable;
-			adi,use-cpll-enable;
 		};
 
 		axi_adrv9009_rx_os_jesd: axi-jesd204-rx@84a70000 {
@@ -1253,8 +1289,8 @@
 			#clock-cells = <1>;
 			clock-output-names = "tx_gt_clk", "tx_out_clk";
 
-			adi,sys-clk-select = <3>;
-			adi,out-clk-select = <3>;
+			adi,sys-clk-select = <XCVR_QPLL>;
+			adi,out-clk-select = <XCVR_REFCLK>;
 		};
 
 		axi_adrv9009_tx_jesd: axi-jesd204-tx@84a30000 {
@@ -1283,7 +1319,7 @@
 			clocks = <&zynqmp_clk 71>;
 			interrupts = <0 110 IRQ_TYPE_LEVEL_HIGH>;
 
-			adi,pulses-per-revolution = <2>;
+			pulses-per-revolution = <2>;
 		};
 
 		rx_dma: dma@9c420000 {
@@ -1298,7 +1334,7 @@
 				#size-cells = <0>;
 				#address-cells = <1>;
 
-				dma-channel@0 {
+				rx_dma_channel: dma-channel@0 {
 					reg = <0>;
 					adi,source-bus-width = <128>;
 					adi,source-bus-type = <2>;
@@ -1320,7 +1356,7 @@
 				#size-cells = <0>;
 				#address-cells = <1>;
 
-				dma-channel@0 {
+				rx_obs_dma_channel: dma-channel@0 {
 					reg = <0>;
 					adi,source-bus-width = <128>;
 					adi,source-bus-type = <2>;
@@ -1342,7 +1378,7 @@
 				#size-cells = <0>;
 				#address-cells = <1>;
 
-				dma-channel@0 {
+				tx_dma_channel: dma-channel@0 {
 					reg = <0>;
 					adi,source-bus-width = <128>;
 					adi,source-bus-type = <0>;
@@ -1354,7 +1390,7 @@
 
 		axi_adrv9009_core_rx: axi-adrv9009-rx-hpc@84a00000 {
 			compatible = "adi,axi-adrv9009-rx-1.0";
-			reg = <0x0 0x84a00000 0x8000>;
+			reg = <0x0 0x84a00000 0x2000>;
 			dmas = <&rx_dma 0>;
 			dma-names = "rx";
 			spibus-connected = <&trx0_adrv9009>;
@@ -1372,7 +1408,7 @@
 
 		axi_adrv9009_core_tx: axi-adrv9009-tx-hpc@84a04000 {
 			compatible = "adi,axi-adrv9009-x2-tx-1.0";
-			reg = <0x0 0x84a04000 0x4000>;
+			reg = <0x0 0x84a04000 0x2000>;
 			dmas = <&tx_dma 0>;
 			dma-names = "tx";
 			clocks = <&trx0_adrv9009 2>;
@@ -1385,7 +1421,6 @@
 		axi_sysid_0: axi-sysid-0@85000000 {
 			compatible = "adi,axi-sysid-1.00.a";
 			reg = <0x0 0x85000000 0x10000>;
-			status = "disabled";
 		};
 	};
 };

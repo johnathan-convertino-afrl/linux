@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Xilinx V4L2 mem2mem driver
  *
@@ -123,7 +123,7 @@ struct xvip_m2m_dev {
 
 static inline struct xvip_pipeline *to_xvip_pipeline(struct media_entity *e)
 {
-	return container_of(e->pipe, struct xvip_pipeline, pipe);
+	return container_of(media_entity_pipeline(e), struct xvip_pipeline, pipe);
 }
 
 /**
@@ -183,7 +183,7 @@ xvip_dma_remote_subdev(struct media_pad *local, u32 *pad)
 {
 	struct media_pad *remote;
 
-	remote = media_entity_remote_pad(local);
+	remote = media_pad_remote_pad_first(local);
 	if (!remote || !is_media_entity_v4l2_subdev(remote->entity))
 		return NULL;
 
@@ -464,12 +464,8 @@ static int xvip_pipeline_validate(struct xvip_pipeline *pipe,
 	media_graph_walk_start(&graph, entity);
 
 	while ((entity = media_graph_walk_next(&graph))) {
-		struct xvip_m2m_dma *dma;
-
 		if (entity->function != MEDIA_ENT_F_IO_V4L)
 			continue;
-
-		dma = to_xvip_dma(media_entity_to_video_device(entity));
 
 		num_outputs++;
 		num_inputs++;
@@ -670,7 +666,7 @@ static void xvip_m2m_stop_streaming(struct vb2_queue *q)
 
 		/* Cleanup the pipeline and mark it as being stopped. */
 		xvip_pipeline_cleanup(pipe);
-		media_pipeline_stop(&dma->video.entity);
+		media_pipeline_stop(dma->video.entity.pads);
 	}
 
 	for (;;) {
@@ -699,10 +695,10 @@ static int xvip_m2m_start_streaming(struct vb2_queue *q, unsigned int count)
 	if (!xdev->num_subdevs)
 		return 0;
 
-	pipe = dma->video.entity.pipe
+	pipe = media_entity_pipeline(&dma->video.entity)
 	     ? to_xvip_pipeline(&dma->video.entity) : &dma->pipe;
 
-	ret = media_pipeline_start(&dma->video.entity, &pipe->pipe);
+	ret = media_pipeline_start(dma->video.entity.pads, &pipe->pipe);
 	if (ret < 0)
 		goto error;
 
@@ -724,7 +720,7 @@ static int xvip_m2m_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	return 0;
 error_stop:
-	media_pipeline_stop(&dma->video.entity);
+	media_pipeline_stop(dma->video.entity.pads);
 
 error:
 	xvip_m2m_stop_streaming(q);
@@ -821,8 +817,6 @@ xvip_m2m_enum_fmt(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 			return PTR_ERR(fmt);
 
 		f->pixelformat = fmt->fourcc;
-		strlcpy(f->description, fmt->description,
-			sizeof(f->description));
 		return 0;
 	}
 
@@ -858,7 +852,6 @@ xvip_m2m_enum_fmt(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 
 	fmtinfo = xvip_get_format_by_fourcc(fmts[i]);
 	f->pixelformat = fmtinfo->fourcc;
-	strlcpy(f->description, fmtinfo->description, sizeof(f->description));
 
 	return 0;
 }
@@ -1115,12 +1108,12 @@ xvip_m2m_s_selection(struct file *file, void *fh, struct v4l2_selection *s)
 static const struct v4l2_ioctl_ops xvip_m2m_ioctl_ops = {
 	.vidioc_querycap		= xvip_dma_querycap,
 
-	.vidioc_enum_fmt_vid_cap_mplane	= xvip_m2m_enum_fmt,
+	.vidioc_enum_fmt_vid_cap	= xvip_m2m_enum_fmt,
 	.vidioc_g_fmt_vid_cap_mplane	= xvip_m2m_get_fmt,
 	.vidioc_try_fmt_vid_cap_mplane	= xvip_m2m_try_fmt,
 	.vidioc_s_fmt_vid_cap_mplane	= xvip_m2m_set_fmt,
 
-	.vidioc_enum_fmt_vid_out_mplane	= xvip_m2m_enum_fmt,
+	.vidioc_enum_fmt_vid_out	= xvip_m2m_enum_fmt,
 	.vidioc_g_fmt_vid_out_mplane	= xvip_m2m_get_fmt,
 	.vidioc_try_fmt_vid_out_mplane	= xvip_m2m_try_fmt,
 	.vidioc_s_fmt_vid_out_mplane	= xvip_m2m_set_fmt,
@@ -1235,6 +1228,7 @@ static void xvip_m2m_prep_submit_dev2mem_desc(struct xvip_m2m_ctx *ctx,
 	u32 luma_size;
 	u32 flags = DMA_PREP_INTERRUPT | DMA_CTRL_ACK;
 	enum operation_mode mode = DEFAULT;
+	u32 bpl, dst_width, dst_height;
 
 	p_out = vb2_dma_contig_plane_dma_addr(&dst_buf->vb2_buf, 0);
 
@@ -1250,6 +1244,15 @@ static void xvip_m2m_prep_submit_dev2mem_desc(struct xvip_m2m_ctx *ctx,
 	ctx->xt.dst_start = p_out;
 
 	pix_mp = &dma->capfmt.fmt.pix_mp;
+	bpl = pix_mp->plane_fmt[0].bytesperline;
+	if (dma->crop) {
+		dst_width = dma->r.width;
+		dst_height = dma->r.height;
+	} else {
+		dst_width = pix_mp->width;
+		dst_height = pix_mp->height;
+	}
+
 	info = dma->capinfo;
 	xilinx_xdma_set_mode(dma->chan_rx, mode);
 	xilinx_xdma_v4l2_config(dma->chan_rx, pix_mp->pixelformat);
@@ -1258,11 +1261,11 @@ static void xvip_m2m_prep_submit_dev2mem_desc(struct xvip_m2m_ctx *ctx,
 	xvip_bpl_scaling_factor(pix_mp->pixelformat, &bpl_nume, &bpl_deno);
 
 	ctx->xt.frame_size = info->num_planes;
-	ctx->sgl[0].size = (pix_mp->width * info->bpl_factor *
+	ctx->sgl[0].size = (dst_width * info->bpl_factor *
 			    padding_factor_nume * bpl_nume) /
 			    (padding_factor_deno * bpl_deno);
-	ctx->sgl[0].icg = pix_mp->plane_fmt[0].bytesperline - ctx->sgl[0].size;
-	ctx->xt.numf = pix_mp->height;
+	ctx->sgl[0].icg = bpl - ctx->sgl[0].size;
+	ctx->xt.numf = dst_height;
 
 	/*
 	 * dst_icg is the number of bytes to jump after last luma addr
@@ -1273,6 +1276,9 @@ static void xvip_m2m_prep_submit_dev2mem_desc(struct xvip_m2m_ctx *ctx,
 	if (info->buffers == 1) {
 		/* Handling contiguous data with mplanes */
 		ctx->sgl[0].dst_icg = 0;
+		if (dma->crop)
+			ctx->sgl[0].dst_icg = bpl *
+					      (pix_mp->height - dst_height);
 	} else {
 		/* Handling non-contiguous data with mplanes */
 		if (info->buffers == 2) {
@@ -1427,7 +1433,7 @@ static struct video_device xvip_m2m_videodev = {
 	.release	= video_device_release_empty,
 	.vfl_dir	= VFL_DIR_M2M,
 	.device_caps	= V4L2_CAP_VIDEO_M2M_MPLANE | V4L2_CAP_STREAMING,
-	.vfl_type	= VFL_TYPE_GRABBER,
+	.vfl_type	= VFL_TYPE_VIDEO,
 };
 
 static const struct v4l2_m2m_ops xvip_m2m_ops = {
@@ -1435,6 +1441,109 @@ static const struct v4l2_m2m_ops xvip_m2m_ops = {
 	.job_ready	= xvip_m2m_job_ready,
 	.job_abort	= xvip_m2m_job_abort,
 };
+
+/*
+ * This function is taken from the framework
+ * video_register_media_controller() function
+ */
+static int xvideo_register_media_controller(struct video_device *vdev)
+{
+#if defined(CONFIG_MEDIA_CONTROLLER)
+	u32 intf_type;
+	int ret;
+
+	/*
+	 * Modified this by removing the condition for VFL_DIR_M2M
+	 * to ensure that the video entity is created.
+	 */
+	if (!vdev->v4l2_dev->mdev)
+		return 0;
+
+	vdev->entity.obj_type = MEDIA_ENTITY_TYPE_VIDEO_DEVICE;
+	vdev->entity.function = MEDIA_ENT_F_UNKNOWN;
+
+	switch (vdev->vfl_type) {
+	case VFL_TYPE_VIDEO:
+		intf_type = MEDIA_INTF_T_V4L_VIDEO;
+		vdev->entity.function = MEDIA_ENT_F_IO_V4L;
+		break;
+	case VFL_TYPE_VBI:
+		intf_type = MEDIA_INTF_T_V4L_VBI;
+		vdev->entity.function = MEDIA_ENT_F_IO_VBI;
+		break;
+	case VFL_TYPE_SDR:
+		intf_type = MEDIA_INTF_T_V4L_SWRADIO;
+		vdev->entity.function = MEDIA_ENT_F_IO_SWRADIO;
+		break;
+	case VFL_TYPE_TOUCH:
+		intf_type = MEDIA_INTF_T_V4L_TOUCH;
+		vdev->entity.function = MEDIA_ENT_F_IO_V4L;
+		break;
+	case VFL_TYPE_RADIO:
+		intf_type = MEDIA_INTF_T_V4L_RADIO;
+		/*
+		 * Radio doesn't have an entity at the V4L2 side to represent
+		 * radio input or output. Instead, the audio input/output goes
+		 * via either physical wires or ALSA.
+		 */
+		break;
+	case VFL_TYPE_SUBDEV:
+		intf_type = MEDIA_INTF_T_V4L_SUBDEV;
+		/* Entity will be created via v4l2_device_register_subdev() */
+		break;
+	default:
+		return 0;
+	}
+
+	if (vdev->entity.function != MEDIA_ENT_F_UNKNOWN) {
+		vdev->entity.name = vdev->name;
+
+		/* Needed just for backward compatibility with legacy MC API */
+		vdev->entity.info.dev.major = VIDEO_MAJOR;
+		vdev->entity.info.dev.minor = vdev->minor;
+
+		ret = media_device_register_entity(vdev->v4l2_dev->mdev,
+						   &vdev->entity);
+		if (ret < 0) {
+			pr_warn("%s: media_device_register_entity failed\n",
+				__func__);
+			return ret;
+		}
+	}
+
+	vdev->intf_devnode = media_devnode_create(vdev->v4l2_dev->mdev,
+						  intf_type,
+						  0, VIDEO_MAJOR,
+						  vdev->minor);
+	if (!vdev->intf_devnode) {
+		media_device_unregister_entity(&vdev->entity);
+		return -ENOMEM;
+	}
+
+	if (vdev->entity.function != MEDIA_ENT_F_UNKNOWN) {
+		struct media_link *link;
+
+		link = media_create_intf_link(&vdev->entity,
+					      &vdev->intf_devnode->intf,
+					      MEDIA_LNK_FL_ENABLED |
+					      MEDIA_LNK_FL_IMMUTABLE);
+		if (!link) {
+			media_devnode_remove(vdev->intf_devnode);
+			media_device_unregister_entity(&vdev->entity);
+			return -ENOMEM;
+		}
+	}
+
+	/* FIXME: how to create the other interface links? */
+
+#endif
+	/* This is added from __video_register_device() */
+
+	/* Part 6: Activate this minor. The char device can now be used. */
+	set_bit(V4L2_FL_REGISTERED, &vdev->flags);
+
+	return 0;
+}
 
 static int xvip_m2m_dma_init(struct xvip_m2m_dma *dma)
 {
@@ -1507,15 +1616,23 @@ static int xvip_m2m_dma_init(struct xvip_m2m_dma *dma)
 	if (ret < 0)
 		goto error;
 
-	ret = video_register_device(&dma->video, VFL_TYPE_GRABBER, -1);
+	ret = video_register_device(&dma->video, VFL_TYPE_VIDEO, -1);
 	if (ret < 0) {
 		dev_err(xdev->dev, "Failed to register mem2mem video device\n");
 		goto tx_rx;
 	}
 
+	ret = xvideo_register_media_controller(&dma->video);
+	if (ret < 0) {
+		dev_err(xdev->dev, "Failed to register media controller\n");
+		goto unreg_video;
+	}
+
 	video_set_drvdata(&dma->video, dma->xdev);
 	return 0;
 
+unreg_video:
+	video_unregister_device(&dma->video);
 tx_rx:
 	dma_release_channel(dma->chan_rx);
 tx:
@@ -1550,6 +1667,8 @@ static int xvip_m2m_dma_alloc_init(struct xvip_m2m_dev *xdev)
 	ret = xvip_m2m_dma_init(xdev->dma);
 	if (ret) {
 		dev_err(xdev->dev, "DMA initialization failed\n");
+		devm_kfree(xdev->dev, dma);
+		xdev->dma = NULL;
 		return ret;
 	}
 
@@ -1572,7 +1691,7 @@ static int xvip_composite_v4l2_init(struct xvip_m2m_dev *xdev)
 	int ret;
 
 	xdev->media_dev.dev = xdev->dev;
-	strlcpy(xdev->media_dev.model, "Xilinx Videoi M2M Composite Device",
+	strlcpy(xdev->media_dev.model, "Xilinx Video M2M Composite Device",
 		sizeof(xdev->media_dev.model));
 	xdev->media_dev.hw_revision = 0;
 
@@ -1955,7 +2074,10 @@ static void xvip_graph_cleanup(struct xvip_m2m_dev *xdev)
 	struct xvip_graph_entity *entityp;
 	struct xvip_graph_entity *entity;
 
-	v4l2_async_notifier_unregister(&xdev->notifier);
+	if (xdev->dma)
+		xvip_m2m_dma_deinit(xdev->dma);
+	v4l2_async_nf_cleanup(&xdev->notifier);
+	v4l2_async_nf_unregister(&xdev->notifier);
 
 	list_for_each_entry_safe(entity, entityp, &xdev->entities, list) {
 		of_node_put(entity->node);
@@ -1966,9 +2088,6 @@ static void xvip_graph_cleanup(struct xvip_m2m_dev *xdev)
 static int xvip_graph_init(struct xvip_m2m_dev *xdev)
 {
 	struct xvip_graph_entity *entity;
-	struct v4l2_async_subdev **subdevs = NULL;
-	unsigned int num_subdevs;
-	unsigned int i;
 	int ret;
 
 	/* Init the DMA channels. */
@@ -1992,23 +2111,16 @@ static int xvip_graph_init(struct xvip_m2m_dev *xdev)
 	}
 
 	/* Register the subdevices notifier. */
-	num_subdevs = xdev->num_subdevs;
-	subdevs = devm_kzalloc(xdev->dev, sizeof(*subdevs) * num_subdevs,
-			       GFP_KERNEL);
-	if (!subdevs) {
-		ret = -ENOMEM;
-		goto done;
+	list_for_each_entry(entity, &xdev->entities, list) {
+		ret = __v4l2_async_nf_add_subdev(&xdev->notifier,
+						 &entity->asd);
+		if (ret)
+			goto done;
 	}
 
-	i = 0;
-	list_for_each_entry(entity, &xdev->entities, list)
-		subdevs[i++] = &entity->asd;
-
-	xdev->notifier.subdevs = subdevs;
-	xdev->notifier.num_subdevs = num_subdevs;
 	xdev->notifier.ops = &xvip_graph_notify_ops;
 
-	ret = v4l2_async_notifier_register(&xdev->v4l2_dev, &xdev->notifier);
+	ret = v4l2_async_nf_register(&xdev->v4l2_dev, &xdev->notifier);
 	if (ret < 0) {
 		dev_err(xdev->dev, "notifier registration failed\n");
 		goto done;
@@ -2044,10 +2156,17 @@ static int xvip_m2m_probe(struct platform_device *pdev)
 
 	xdev->dev = &pdev->dev;
 	INIT_LIST_HEAD(&xdev->entities);
+	v4l2_async_nf_init(&xdev->notifier);
 
 	ret = xvip_composite_v4l2_init(xdev);
 	if (ret)
 		return -EINVAL;
+
+	xdev->m2m_dev = v4l2_m2m_init(&xvip_m2m_ops);
+	if (IS_ERR(xdev->m2m_dev)) {
+		dev_err(xdev->dev, "Failed to init mem2mem device\n");
+		return PTR_ERR(xdev->m2m_dev);
+	}
 
 	ret = xvip_graph_init(xdev);
 	if (ret < 0)
@@ -2060,13 +2179,6 @@ static int xvip_m2m_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, xdev);
-
-	xdev->m2m_dev = v4l2_m2m_init(&xvip_m2m_ops);
-	if (IS_ERR(xdev->m2m_dev)) {
-		dev_err(xdev->dev, "Failed to init mem2mem device\n");
-		ret = PTR_ERR(xdev->m2m_dev);
-		goto dma_cleanup;
-	}
 
 	dev_info(xdev->dev, "mem2mem device registered\n");
 	return 0;

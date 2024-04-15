@@ -1,9 +1,34 @@
+config DRM_ZYNQMP_DPSUB
+	tristate "ZynqMP DisplayPort Controller Driver"
+	depends on ARCH_ZYNQMP || COMPILE_TEST
+	depends on COMMON_CLK && DRM && OF
+	depends on DMADEVICES
+	depends on PHY_XILINX_ZYNQMP
+	depends on DRM_XLNX
+	select XILINX_ZYNQMP_DPDMA
+	select VIDEOMODE_HELPERS
+	select XILINX_DMA_ENGINES
+	select DMA_ENGINE
+	select DRM_DISPLAY_DP_HELPER
+	select DRM_DISPLAY_HELPER
+	select DRM_GEM_DMA_HELPER
+	select DRM_KMS_HELPER
+	select GENERIC_PHY
+	select DRM_DISPLAY_HELPER
+	select DRM_DISPLAY_DP_HELPER
+	select MFD_SYSCON
+	help
+	  This is a DRM/KMS driver for ZynqMP DisplayPort controller. Choose
+	  this option if you have a Xilinx ZynqMP SoC with DisplayPort
+	  subsystem.
+
 config DRM_XLNX
 	tristate "Xilinx DRM KMS Driver"
 	depends on DRM && OF
 	select DRM_KMS_HELPER
-	select DRM_KMS_CMA_HELPER
-	select DRM_GEM_CMA_HELPER
+	select DRM_KMS_DMA_HELPER
+	select DRM_GEM_DMA_HELPER
+	select SND_PCM_ELD
 	help
 	  Xilinx DRM KMS driver. Choose this option if you have
 	  a Xilinx SoCs with hardened display pipeline or soft
@@ -30,16 +55,18 @@ config DRM_XLNX_BRIDGE_DEBUG_FS
 	  as well as can enable additional diagnostic or statistical
 	  information.
 
-config DRM_ZYNQMP_DPSUB
-	tristate "ZynqMP DP Subsystem Driver"
-	depends on ARCH_ZYNQMP && OF && DRM_XLNX && COMMON_CLK
-	select XILINX_DPDMA
-	select PHY_XILINX_ZYNQMP
+config DRM_XLNX_DPTX
+	tristate "Xilinx DRM DisplayPort Subsystem Driver"
+	depends on DRM_XLNX
+	select DRM_DISPLAY_HELPER
+	select DRM_DISPLAY_HDMI_HELPER
+	select DRM_DISPLAY_DP_HELPER
+	select DRM_XLNX_HDCP
 	help
-	  DRM KMS driver for ZynqMP DP Subsystem controller. Choose
-	  this option if you have a Xilinx ZynqMP SoC with DisplayPort
-	  subsystem. The driver provides the kernel mode setting
-	  functionlaities for ZynqMP DP subsystem.
+	  DRM driver for Xilinx DisplayPort Tx Subsystem for FPGA. Choose
+	  this option if you have a FPGA display pipeline that includes
+	  the Xilinx DisplayPort Tx Subsystem IP. The driver provides
+	  the kernel mode setting functionalities for the IP.
 
 config DRM_XLNX_DSI
 	tristate "Xilinx DRM DSI Subsystem Driver"
@@ -48,20 +75,29 @@ config DRM_XLNX_DSI
 	select DRM_PANEL
 	select BACKLIGHT_LCD_SUPPORT
 	select BACKLIGHT_CLASS_DEVICE
-	select DRM_PANEL_SIMPLE
 	help
 	  DRM driver for Xilinx MIPI-DSI.
+
+config DRM_XLNX_HDMITX
+	tristate "Xilinx DRM HDMI Subsystem Driver"
+	depends on DRM_XLNX
+	select DRM_XLNX_HDCP
+	help
+	  DRM driver for Xilinx HDMI Tx Subsystem for FPGA. Choose
+	  this option if you have a FPGA display pipeline that includes
+	  the Xilinx HDMI Tx Subsystem IP. The driver provides
+	  the kernel mode setting functionalities for the IP.
 
 config DRM_XLNX_MIXER
 	tristate "Xilinx DRM Mixer Driver"
 	depends on DRM_XLNX
 	select VIDEOMODE_HELPERS
 	help
-	  DRM driver for Xilinx Mixer driver
+	  DRM driver for Xilinx Mixer driver.
 
 config DRM_XLNX_PL_DISP
 	tristate "Xilinx DRM PL display driver"
-	depends on DRM_XLNX
+	depends on DRM_XLNX && XILINX_FRMBUF
 	select VIDEOMODE_HELPERS
 	help
 	  DRM driver for Xilinx PL display driver, provides drm
@@ -72,6 +108,9 @@ config DRM_XLNX_PL_DISP
 config DRM_XLNX_SDI
 	tristate "Xilinx DRM SDI Subsystem Driver"
 	depends on DRM_XLNX
+	select DRM_DISPLAY_HELPER
+	select DRM_DISPLAY_HDMI_HELPER
+	select DRM_DISPLAY_DP_HELPER
 	help
 	  DRM driver for Xilinx SDI Tx Subsystem.
 
@@ -102,3 +141,15 @@ config DRM_XLNX_BRIDGE_VTC
 	  Currently the support is added to the Xilinx Video Mixer and
 	  Xilinx PL display CRTC drivers. This driver provides ability
 	  to generate timings through the bridge layer.
+
+config DRM_XLNX_HDCP
+	tristate "Xilinx DRM HDCP Driver"
+	depends on DRM_XLNX_DPTX || DRM_XLNX_HDMITX
+	select XILINX_HDCP_COMMON
+	select CRYPTO_AES
+	help
+	  Enables the Functionality of HDCP Encryption/Decryption for
+	  Xilinx display drivers. It handles the HDCP authentication.
+	  Choose this option if you have a FPGA display pipeline using
+	  Xilinx FPGA's in IP. This driver provides the kernel mode
+	  setting functionalities for the IP.

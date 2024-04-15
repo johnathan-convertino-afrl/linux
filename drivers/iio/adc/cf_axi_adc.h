@@ -12,6 +12,7 @@
 #define ADI_AXI_ADC_H_
 
 #include <linux/fpga/adi-axi-common.h>
+#include <linux/iio/iio.h>
 
 /* ADC COMMON */
 
@@ -25,15 +26,26 @@
 #define ADI_CMOS_OR_LVDS_N		(1 << 7)
 #define ADI_PPS_RECEIVER_ENABLE		(1 << 8)
 #define ADI_SCALECORRECTION_ONLY	(1 << 9)
+#define ADI_EXT_SYNC			(1 << 12)
 
 #define ADI_REG_RSTN			0x0040
 #define ADI_RSTN				(1 << 0)
 #define ADI_MMCM_RSTN 			(1 << 1)
 
 #define ADI_REG_CNTRL			0x0044
+#define ADI_NUM_LANES(x)                (((x) & 0x1F) << 8)
+#define ADI_SYNC			(1 << 3)
 #define ADI_R1_MODE			(1 << 2)
 #define ADI_DDR_EDGESEL			(1 << 1)
 #define ADI_PIN_MODE			(1 << 0)
+
+#define ADI_REG_CNTRL_2			0x0048
+#define ADI_EXT_SYNC_ARM		(1 << 1)
+#define ADI_EXT_SYNC_DISARM		(1 << 2)
+#define ADI_MANUAL_SYNC_REQUEST		(1 << 8)
+
+#define ADI_REG_CNTRL_3			0x004c
+#define ADI_CRC_EN			(1 << 8)
 
 #define ADI_REG_CLK_FREQ			0x0054
 #define ADI_CLK_FREQ(x)			(((x) & 0xFFFFFFFF) << 0)
@@ -62,6 +74,9 @@
 #define ADI_DELAY_STATUS			(1 << 8)
 #define ADI_DELAY_RDATA(x)		(((x) & 0x1F) << 0)
 #define ADI_TO_DELAY_RDATA(x)		(((x) >> 0) & 0x1F)
+
+#define ADI_REG_SYNC_STATUS		0x0068
+#define ADI_ADC_SYNC_STATUS		(1 << 0)
 
 #define ADI_REG_DRP_CNTRL		0x0070
 #define ADI_DRP_SEL			(1 << 29)
@@ -95,21 +110,6 @@
 #define ADI_REG_CLOCKS_PER_PPS_STATUS	0x00C4
 #define ADI_CLOCKS_PER_PPS_STAT_INVAL	(1 << 0)
 
-/* JESD TPL */
-
-#define ADI_REG_TPL_CNTRL		0x0200
-#define ADI_REG_TPL_STATUS		0x0204
-#define ADI_REG_TPL_DESCRIPTOR_1	0x0240
-#define ADI_REG_TPL_DESCRIPTOR_2	0x0244
-
-#define ADI_TO_JESD_M(x)		(((x) >> 0) & 0xFF)
-#define ADI_TO_JESD_L(x)		(((x) >> 8) & 0xFF)
-#define ADI_TO_JESD_S(x)		(((x) >> 16) & 0xFF)
-#define ADI_TO_JESD_F(x)		(((x) >> 24) & 0xFF)
-
-#define ADI_TO_JESD_N(x)		(((x) >> 0) & 0xFF)
-#define ADI_TO_JESD_NP(x)		(((x) >> 8) & 0xFF)
-
 /* ADC CHANNEL */
 
 #define ADI_REG_CHAN_CNTRL(c)		(0x0400 + (c) * 0x40)
@@ -120,12 +120,16 @@
 #define ADI_FORMAT_TYPE			(1 << 5)
 #define ADI_FORMAT_ENABLE		(1 << 4)
 #define ADI_PN23_TYPE			(1 << 1) /* !v8.0 */
+#ifndef ADI_ENABLE
 #define ADI_ENABLE			(1 << 0)
+#endif
 
 #define ADI_REG_CHAN_STATUS(c)		(0x0404 + (c) * 0x40)
 #define ADI_PN_ERR			(1 << 2)
 #define ADI_PN_OOS			(1 << 1)
 #define ADI_OVER_RANGE			(1 << 0)
+
+#define ADI_REG_CHAN_RAW_DATA(c)	(0x0408 + (c) * 0x40)
 
 #define ADI_REG_CHAN_CNTRL_1(c)		(0x0410 + (c) * 0x40)
 #define ADI_DCFILT_OFFSET(x)		(((x) & 0xFFFF) << 16)
@@ -145,6 +149,8 @@
 #define ADI_ADC_DATA_SEL(x)		(((x) & 0xF) << 0)
 #define ADI_TO_ADC_DATA_SEL(x)		(((x) >> 0) & 0xF)
 
+#define ADI_SOFTSPAN(c)			(0x0428 + (c) * 0x40)
+
 enum adc_pn_sel {
 	ADC_PN9 = 0,
 	ADC_PN23A = 1,
@@ -153,7 +159,9 @@ enum adc_pn_sel {
 	ADC_PN23 = 6,
 	ADC_PN31 = 7,
 	ADC_PN_CUSTOM = 9,
-	ADC_PN_OFF = 10,
+	ADC_PN_RAMP_NIBBLE = 10,
+	ADC_PN_RAMP_16 = 11,
+	ADC_PN_OFF = 12,
 };
 
 enum adc_data_sel {
@@ -186,18 +194,21 @@ enum adc_data_sel {
 
 #define AXIADC_MAX_CHANNEL		128
 
+#include <linux/mutex.h>
 #include <linux/spi/spi.h>
 #include <linux/clk/clkscale.h>
 
 struct axiadc_state;
 
 struct axiadc_chip_info {
+	unsigned int			id;
 	char				*name;
 	unsigned			num_channels;
 	unsigned 		num_shadow_slave_channels;
 	const unsigned long 	*scan_masks;
 	const int			(*scale_table)[2];
 	int				num_scales;
+	int				resolution;
 	int				max_testmode;
 	unsigned long			max_rate;
 	struct iio_chan_spec		channel[AXIADC_MAX_CHANNEL];
@@ -209,6 +220,7 @@ struct axiadc_converter {
 	struct clock_scale		adc_clkscale;
 	struct clk		*lane_clk;
 	struct clk		*sysref_clk;
+	struct clk		*out_clk;
 	void 			*phy;
 	struct gpio_desc		*pwrdown_gpio;
 	struct gpio_desc		*reset_gpio;
@@ -230,6 +242,12 @@ struct axiadc_converter {
 	int				num_channels;
 	const struct attribute_group	*attrs;
 	struct iio_dev 	*indio_dev;
+	/*
+	 * shared lock between the converter and axi_adc to sync
+	 * accesses/configurations to/with the IP core. The axi_adc driver is
+	 * responsible to initialize this lock.
+	 */
+	struct mutex lock;
 	int (*read_raw)(struct iio_dev *indio_dev,
 			struct iio_chan_spec const *chan,
 			int *val,
@@ -268,6 +286,9 @@ struct axiadc_converter {
 			enum iio_event_type type,
 			enum iio_event_direction dir,
 			int state);
+
+	int (*read_label)(struct iio_dev *indio_dev,
+			const struct iio_chan_spec *chan, char *label);
 
 	int (*post_setup)(struct iio_dev *indio_dev);
 	int (*post_iio_register)(struct iio_dev *indio_dev);

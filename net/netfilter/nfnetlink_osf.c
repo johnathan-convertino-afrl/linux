@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -30,32 +31,26 @@ EXPORT_SYMBOL_GPL(nf_osf_fingers);
 static inline int nf_osf_ttl(const struct sk_buff *skb,
 			     int ttl_check, unsigned char f_ttl)
 {
+	struct in_device *in_dev = __in_dev_get_rcu(skb->dev);
 	const struct iphdr *ip = ip_hdr(skb);
+	const struct in_ifaddr *ifa;
+	int ret = 0;
 
-	if (ttl_check != -1) {
-		if (ttl_check == NF_OSF_TTL_TRUE)
-			return ip->ttl == f_ttl;
-		if (ttl_check == NF_OSF_TTL_NOCHECK)
-			return 1;
-		else if (ip->ttl <= f_ttl)
-			return 1;
-		else {
-			struct in_device *in_dev = __in_dev_get_rcu(skb->dev);
-			int ret = 0;
+	if (ttl_check == NF_OSF_TTL_TRUE)
+		return ip->ttl == f_ttl;
+	if (ttl_check == NF_OSF_TTL_NOCHECK)
+		return 1;
+	else if (ip->ttl <= f_ttl)
+		return 1;
 
-			for_ifa(in_dev) {
-				if (inet_ifa_match(ip->saddr, ifa)) {
-					ret = (ip->ttl == f_ttl);
-					break;
-				}
-			}
-			endfor_ifa(in_dev);
-
-			return ret;
+	in_dev_for_each_ifa_rcu(ifa, in_dev) {
+		if (inet_ifa_match(ip->saddr, ifa)) {
+			ret = (ip->ttl == f_ttl);
+			break;
 		}
 	}
 
-	return ip->ttl == f_ttl;
+	return ret;
 }
 
 struct nf_osf_hdr_ctx {
@@ -71,6 +66,7 @@ static bool nf_osf_match_one(const struct sk_buff *skb,
 			     int ttl_check,
 			     struct nf_osf_hdr_ctx *ctx)
 {
+	const __u8 *optpinit = ctx->optp;
 	unsigned int check_WSS = 0;
 	int fmatch = FMATCH_WRONG;
 	int foptsize, optnum;
@@ -160,18 +156,21 @@ static bool nf_osf_match_one(const struct sk_buff *skb,
 		}
 	}
 
+	if (fmatch != FMATCH_OK)
+		ctx->optp = optpinit;
+
 	return fmatch == FMATCH_OK;
 }
 
 static const struct tcphdr *nf_osf_hdr_ctx_init(struct nf_osf_hdr_ctx *ctx,
 						const struct sk_buff *skb,
 						const struct iphdr *ip,
-						unsigned char *opts)
+						unsigned char *opts,
+						struct tcphdr *_tcph)
 {
 	const struct tcphdr *tcp;
-	struct tcphdr _tcph;
 
-	tcp = skb_header_pointer(skb, ip_hdrlen(skb), sizeof(struct tcphdr), &_tcph);
+	tcp = skb_header_pointer(skb, ip_hdrlen(skb), sizeof(struct tcphdr), _tcph);
 	if (!tcp)
 		return NULL;
 
@@ -187,6 +186,8 @@ static const struct tcphdr *nf_osf_hdr_ctx_init(struct nf_osf_hdr_ctx *ctx,
 
 		ctx->optp = skb_header_pointer(skb, ip_hdrlen(skb) +
 				sizeof(struct tcphdr), ctx->optsize, opts);
+		if (!ctx->optp)
+			return NULL;
 	}
 
 	return tcp;
@@ -206,14 +207,15 @@ nf_osf_match(const struct sk_buff *skb, u_int8_t family,
 	int fmatch = FMATCH_WRONG;
 	struct nf_osf_hdr_ctx ctx;
 	const struct tcphdr *tcp;
+	struct tcphdr _tcph;
 
 	memset(&ctx, 0, sizeof(ctx));
 
-	tcp = nf_osf_hdr_ctx_init(&ctx, skb, ip, opts);
+	tcp = nf_osf_hdr_ctx_init(&ctx, skb, ip, opts, &_tcph);
 	if (!tcp)
 		return false;
 
-	ttl_check = (info->flags & NF_OSF_TTL) ? info->ttl : -1;
+	ttl_check = (info->flags & NF_OSF_TTL) ? info->ttl : 0;
 
 	list_for_each_entry_rcu(kf, &nf_osf_fingers[ctx.df], finger_entry) {
 
@@ -256,8 +258,9 @@ nf_osf_match(const struct sk_buff *skb, u_int8_t family,
 }
 EXPORT_SYMBOL_GPL(nf_osf_match);
 
-const char *nf_osf_find(const struct sk_buff *skb,
-			const struct list_head *nf_osf_fingers)
+bool nf_osf_find(const struct sk_buff *skb,
+		 const struct list_head *nf_osf_fingers,
+		 const int ttl_check, struct nf_osf_data *data)
 {
 	const struct iphdr *ip = ip_hdr(skb);
 	const struct nf_osf_user_finger *f;
@@ -265,24 +268,27 @@ const char *nf_osf_find(const struct sk_buff *skb,
 	const struct nf_osf_finger *kf;
 	struct nf_osf_hdr_ctx ctx;
 	const struct tcphdr *tcp;
-	const char *genre = NULL;
+	struct tcphdr _tcph;
+	bool found = false;
 
 	memset(&ctx, 0, sizeof(ctx));
 
-	tcp = nf_osf_hdr_ctx_init(&ctx, skb, ip, opts);
+	tcp = nf_osf_hdr_ctx_init(&ctx, skb, ip, opts, &_tcph);
 	if (!tcp)
-		return NULL;
+		return false;
 
 	list_for_each_entry_rcu(kf, &nf_osf_fingers[ctx.df], finger_entry) {
 		f = &kf->finger;
-		if (!nf_osf_match_one(skb, f, -1, &ctx))
+		if (!nf_osf_match_one(skb, f, ttl_check, &ctx))
 			continue;
 
-		genre = f->genre;
+		data->genre = f->genre;
+		data->version = f->version;
+		found = true;
 		break;
 	}
 
-	return genre;
+	return found;
 }
 EXPORT_SYMBOL_GPL(nf_osf_find);
 
@@ -290,10 +296,9 @@ static const struct nla_policy nfnl_osf_policy[OSF_ATTR_MAX + 1] = {
 	[OSF_ATTR_FINGER]	= { .len = sizeof(struct nf_osf_user_finger) },
 };
 
-static int nfnl_osf_add_callback(struct net *net, struct sock *ctnl,
-				 struct sk_buff *skb, const struct nlmsghdr *nlh,
-				 const struct nlattr * const osf_attrs[],
-				 struct netlink_ext_ack *extack)
+static int nfnl_osf_add_callback(struct sk_buff *skb,
+				 const struct nfnl_info *info,
+				 const struct nlattr * const osf_attrs[])
 {
 	struct nf_osf_user_finger *f;
 	struct nf_osf_finger *kf = NULL, *sf;
@@ -305,7 +310,7 @@ static int nfnl_osf_add_callback(struct net *net, struct sock *ctnl,
 	if (!osf_attrs[OSF_ATTR_FINGER])
 		return -EINVAL;
 
-	if (!(nlh->nlmsg_flags & NLM_F_CREATE))
+	if (!(info->nlh->nlmsg_flags & NLM_F_CREATE))
 		return -EINVAL;
 
 	f = nla_data(osf_attrs[OSF_ATTR_FINGER]);
@@ -323,7 +328,7 @@ static int nfnl_osf_add_callback(struct net *net, struct sock *ctnl,
 		kfree(kf);
 		kf = NULL;
 
-		if (nlh->nlmsg_flags & NLM_F_EXCL)
+		if (info->nlh->nlmsg_flags & NLM_F_EXCL)
 			err = -EEXIST;
 		break;
 	}
@@ -337,11 +342,9 @@ static int nfnl_osf_add_callback(struct net *net, struct sock *ctnl,
 	return err;
 }
 
-static int nfnl_osf_remove_callback(struct net *net, struct sock *ctnl,
-				    struct sk_buff *skb,
-				    const struct nlmsghdr *nlh,
-				    const struct nlattr * const osf_attrs[],
-				    struct netlink_ext_ack *extack)
+static int nfnl_osf_remove_callback(struct sk_buff *skb,
+				    const struct nfnl_info *info,
+				    const struct nlattr * const osf_attrs[])
 {
 	struct nf_osf_user_finger *f;
 	struct nf_osf_finger *sf;
@@ -375,11 +378,13 @@ static int nfnl_osf_remove_callback(struct net *net, struct sock *ctnl,
 static const struct nfnl_callback nfnl_osf_callbacks[OSF_MSG_MAX] = {
 	[OSF_MSG_ADD]	= {
 		.call		= nfnl_osf_add_callback,
+		.type		= NFNL_CB_MUTEX,
 		.attr_count	= OSF_ATTR_MAX,
 		.policy		= nfnl_osf_policy,
 	},
 	[OSF_MSG_REMOVE]	= {
 		.call		= nfnl_osf_remove_callback,
+		.type		= NFNL_CB_MUTEX,
 		.attr_count	= OSF_ATTR_MAX,
 		.policy		= nfnl_osf_policy,
 	},

@@ -3,14 +3,14 @@
  * @brief     Common API definitions header file.
  *            This file contains all common API definitions.
  *
- * @copyright copyright(c) 2018 analog devices, inc. all rights reserved.
+ * @copyright copyright(c) 2020 analog devices, inc. all rights reserved.
  *            This software is proprietary to Analog Devices, Inc. and its
  *            licensor. By using this software you agree to the terms of the
  *            associated analog devices software license agreement.
  */
 
 /*!
- * @addtogroup __ADI_API_COMMON__
+ * @addtogroup ADI_API_COMMON
  * @{
  */
 #ifndef __ADI_CMS_API_COMMON_H__
@@ -21,6 +21,28 @@
 #include <linux/kernel.h>
 #include <linux/math64.h>
 #include <linux/delay.h>
+#include <linux/gcd.h>
+
+static inline int32_t adi_api_utils_is_power_of_two(uint64_t x)
+{
+	return (u32) is_power_of_2(x);
+}
+
+static inline int32_t adi_api_utils_gcd(int32_t u, int32_t v)
+{
+	return (u32) gcd(u, v);
+}
+
+static inline uint32_t adi_api_utils_log2(uint32_t a)
+{
+	uint8_t b = 0;
+
+	while (a >>= 1)
+		b++;
+
+	return b; /* log2(a) , only for power of 2 numbers */
+}
+
 #else
 #include <stdio.h>
 #include <stdint.h>
@@ -53,6 +75,8 @@ typedef enum {
 	API_CMS_ERROR_PLL_NOT_LOCKED = -21, /*!< PLL is not locked */
 	API_CMS_ERROR_DLL_NOT_LOCKED = -22, /*!< DLL is not locked */
 	API_CMS_ERROR_MODE_NOT_IN_TABLE = -23, /*!< JESD Mode not in table */
+	API_CMS_ERROR_JESD_PLL_NOT_LOCKED = -24, /*!< PD STBY function error */
+	API_CMS_ERROR_JESD_SYNC_NOT_DONE = -25, /*!< JESD_SYNC_NOT_DONE */
 	API_CMS_ERROR_FTW_LOAD_ACK = -30, /*!< FTW acknowledge not received */
 	API_CMS_ERROR_NCO_NOT_ENABLED = -31, /*!< The NCO is not enabled */
 	API_CMS_ERROR_INIT_SEQ_FAIL =
@@ -67,7 +91,10 @@ typedef enum {
 	API_CMS_ERROR_LOG_OPEN = -67, /*!< Log open error */
 	API_CMS_ERROR_LOG_WRITE = -68, /*!< Log write error */
 	API_CMS_ERROR_LOG_CLOSE = -69, /*!< Log close error */
-	API_CMS_ERROR_DELAY_US = -70 /*!< Delay error */
+	API_CMS_ERROR_DELAY_US = -70, /*!< Delay error */
+	API_CMS_ERROR_PD_STBY_PIN_CTRL = -71, /*!< PD STBY function error */
+	API_CMS_ERROR_SYSREF_CTRL = -72 /*!< SYSREF enable function error */
+
 } adi_cms_error_e;
 
 /*!
@@ -243,6 +270,15 @@ typedef struct {
 	uint8_t jesd_mode_s_sel; /*!< JESD mode S value */
 } adi_cms_jesd_param_t;
 
+/*!
+ * @brief  Enumerate ADI Device Operating Mode
+ */
+typedef enum {
+	TX_ONLY = 1, /*!< Chip using Tx path only */
+	RX_ONLY = 2, /*!< Chip using Rx path only */
+	TX_RX_ONLY = 3 /*!< Chip using Tx + Rx both paths */
+} adi_cms_chip_op_mode_t;
+
 /**
  * @brief  Platform dependent SPI access functions.
  *
@@ -304,7 +340,7 @@ typedef int32_t (*adi_log_write_s_t)(void *user_data, int32_t log_type,
 				     char *message);
 
 /**
- * @brief  Platform hardware initialization for the AD9164 Device
+ * @brief  Platform hardware initialization for the ADL5580 Device
  *         This function shall initialize all external hardware resources required by
  *         the ADI Device and API for correct functionality as per the
  *         target platform.
@@ -322,7 +358,7 @@ typedef int32_t (*adi_hw_open_t)(void *user_data);
 /**
  * @brief  Closes any platform hardware resources for device.
  *         This function shall close or shutdown all external hardware resources
- *         required by the AD9164 Device and API for correct functionality
+ *         required by the ADL5580 Device and API for correct functionality
  *         as per the target platform.
  *         For example initialization of SPI, GPIO resources, clocks etc.
  *         It should close and free any resources assigned in the hw_open_t function.
@@ -366,6 +402,22 @@ typedef int32_t (*adi_event_handler_t)(uint16_t event, uint8_t ref, void *data);
 typedef int32_t (*adi_tx_en_pin_ctrl_t)(void *user_data, uint8_t enable);
 
 /**
+ * @brief  pd_stby pin control function
+ *
+ * @param  user_data A void pointer to a client defined structure containing
+ *                   any parameters/settings that may be required by the function
+ *                   to control the hardware for the ADI Device PD_STBY PIN.
+ * @param  enable    A uint8_t value indicating the desired enable/disable
+ *                   setting for the pd_stby pin.
+ *                   A value of 1 indicates pd_stby pin is set HIGH
+ *                   A value of 0 indicates pd_stby pin is set LOW
+ *
+ * @return 0 for success
+ * @return Any non-zero value indicates an error
+ */
+typedef int32_t (*adi_pd_stby_pin_ctrl_t)(void *user_data, uint8_t enable);
+
+/**
  * @brief  reset pin control function
  *
  * @param  user_data  A void pointer to a client defined structure containing
@@ -380,6 +432,51 @@ typedef int32_t (*adi_tx_en_pin_ctrl_t)(void *user_data, uint8_t enable);
  * @return Any non-zero value indicates an error
  */
 typedef int32_t (*adi_reset_pin_ctrl_t)(void *user_data, uint8_t enable);
+
+/**
+ * @brief sysref control function
+ *
+ * @param sysref_clk   A void pointer to a structure containing the clock source
+ *                     required by the function to control the hardware sysref control.
+ *
+ * @return 0 for success
+ * @return Any non-zero value indicates an error
+ */
+typedef int32_t (*adi_sysref_ctrl_t)(void *sysref_clk);
+
+/**
+ * @brief   Control function for GPIO write.
+ *
+ * @param   user_data   A void pointer to a client defined structure containing
+ *                      any parameters/settings that may be required by the function
+ *                      to control the hardware for the ADI Device RESETB PIN.
+ * @param   gpio        A uint32_t GPIO index used for identification. See enum "adi_adl5580_gpio_e".
+ * @param   value       A uint32_t value indicating the desired high/low state for GPIO.
+ *                      A value of 1 indicates GPIO pin is set HIGH
+ *                      A value of 0 indicates GPIO pin is set LOW
+ *
+ * @return 0 for success
+ * @return Any non-zero value indicates an error
+ */
+typedef int32_t (*adi_gpio_write_t)(void *user_data, uint32_t gpio,
+				    uint32_t value);
+
+/**
+ * @brief   Control function for GPIO write.
+ *
+ * @param   user_data   A void pointer to a client defined structure containing
+ *                      any parameters/settings that may be required by the function
+ *                      to control the hardware for the ADI Device RESETB PIN.
+ * @param   gpio        A uint32_t GPIO index used for identification. See enum "adi_adl5580_gpio_e".
+ * @param   value       A uint32_t integer pointer indicating the readback state of GPIO.
+ *                      A value of 1 indicates GPIO pin is set HIGH
+ *                      A value of 0 indicates GPIO pin is set LOW
+ * @Note    Depending on the platform, reading a GPIO which is set as an OUTPUT may result in changing the GPIO state.
+ * @return 0 for success
+ * @return Any non-zero value indicates an error
+ */
+typedef int32_t (*adi_gpio_read_t)(void *user_data, uint32_t gpio,
+				   uint32_t *value);
 
 #endif /* __ADI_API_COMMON_H__ */
 /*! @} */

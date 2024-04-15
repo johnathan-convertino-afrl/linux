@@ -4,7 +4,7 @@
  * https://wiki.analog.com/resources/eval/user-guides/ad-fmcdaq2-ebz
  *
  * hdl_project: <daq2/zc706>
- * board_revision: <>
+ * board_revision: <Rev.C or later>
  *
  * Copyright (C) 2014-2019 Analog Devices Inc.
  */
@@ -12,6 +12,7 @@
 
 #include "zynq-zc706.dtsi"
 #include "zynq-zc706-adv7511.dtsi"
+#include <dt-bindings/jesd204/adxcvr.h>
 
 &i2c_mux {
 	i2c@5 { /* HPC IIC */
@@ -22,11 +23,6 @@
 		eeprom@50 {
 			compatible = "at24,24c02";
 			reg = <0x50>;
-		};
-
-		eeprom@54 {
-			compatible = "at24,24c02";
-			reg = <0x54>;
 		};
 
 		ad7291@2f {
@@ -40,7 +36,7 @@
 &fpga_axi {
 	rx_dma: rx-dmac@7c400000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c400000 0x10000>;
+		reg = <0x7c400000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -61,7 +57,7 @@
 
 	tx_dma: tx-dmac@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -87,6 +83,11 @@
 		dma-names = "tx";
 		spibus-connected = <&dac0_ad9144>;
 		adi,axi-pl-fifo-enable;
+
+		/* jesd204-fsm support */
+		jesd204-device;
+		#jesd204-cells = <2>;
+		jesd204-inputs = <&axi_ad9144_jesd 1 0>;
 	};
 
 	axi_ad9144_jesd: axi-jesd204-tx@44a90000 {
@@ -95,17 +96,16 @@
 
 		interrupts = <0 54 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&clkc 16>, <&axi_ad9144_adxcvr 1>, <&axi_ad9144_adxcvr 0>;
+		clocks = <&clkc 15>, <&axi_ad9144_adxcvr 1>, <&axi_ad9144_adxcvr 0>;
 		clock-names = "s_axi_aclk", "device_clk", "lane_clk";
-
-		adi,octets-per-frame = <1>;
-		adi,frames-per-multiframe = <32>;
-		adi,converter-resolution = <16>;
-		adi,bits-per-sample = <16>;
-		adi,converters-per-device = <2>;
 
 		#clock-cells = <0>;
 		clock-output-names = "jesd_dac_lane_clk";
+
+		/* jesd204-fsm support */
+		jesd204-device;
+		#jesd204-cells = <2>;
+		jesd204-inputs = <&axi_ad9144_adxcvr 1 0>;
 	};
 
 	axi_ad9680_core: axi-ad9680-hpc@44a10000 {
@@ -114,6 +114,11 @@
 		dmas = <&rx_dma 0>;
 		dma-names = "rx";
 		spibus-connected = <&adc0_ad9680>;
+
+		/* jesd204-fsm support */
+		jesd204-device;
+		#jesd204-cells = <2>;
+		jesd204-inputs = <&axi_ad9680_jesd 0 0>;
 	};
 
 	axi_ad9680_jesd: axi-jesd204-rx@44aa0000 {
@@ -122,7 +127,7 @@
 
 		interrupts = <0 55 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&clkc 16>, <&axi_ad9680_adxcvr 1>, <&axi_ad9680_adxcvr 0>;
+		clocks = <&clkc 15>, <&axi_ad9680_adxcvr 1>, <&axi_ad9680_adxcvr 0>;
 		clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
 		adi,octets-per-frame = <1>;
@@ -130,6 +135,11 @@
 
 		#clock-cells = <0>;
 		clock-output-names = "jesd_adc_lane_clk";
+
+		/* jesd204-fsm support */
+		jesd204-device;
+		#jesd204-cells = <2>;
+		jesd204-inputs = <&axi_ad9680_adxcvr 0 0>;
 	};
 
 	axi_ad9680_adxcvr: axi-adxcvr-rx@44a50000 {
@@ -142,11 +152,13 @@
 		#clock-cells = <1>;
 		clock-output-names = "adc_gt_clk", "rx_out_clk";
 
-		adi,sys-clk-select = <0>;
-		adi,out-clk-select = <4>;
+		adi,sys-clk-select = <XCVR_QPLL>;
+		adi,out-clk-select = <XCVR_REFCLK_DIV2>;
 		adi,use-lpm-enable;
-		adi,use-cpll-enable;
-		adi,vco-max-khz = <5000000>;
+
+		/* jesd204-fsm support */
+		jesd204-device;
+		#jesd204-cells = <2>;
 	};
 
 	axi_ad9144_adxcvr: axi-adxcvr-tx@44a60000 {
@@ -159,9 +171,13 @@
 		#clock-cells = <1>;
 		clock-output-names = "dac_gt_clk", "tx_out_clk";
 
-		adi,sys-clk-select = <3>;
-		adi,out-clk-select = <4>;
+		adi,sys-clk-select = <XCVR_QPLL>;
+		adi,out-clk-select = <XCVR_REFCLK_DIV2>;
 		adi,use-lpm-enable;
+
+		/* jesd204-fsm support */
+		jesd204-device;
+		#jesd204-cells = <2>;
 	};
 };
 

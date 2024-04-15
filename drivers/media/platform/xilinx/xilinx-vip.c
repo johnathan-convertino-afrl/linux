@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Xilinx Video IP Core
  *
@@ -6,10 +7,6 @@
  *
  * Contacts: Hyun Kwon <hyun.kwon@xilinx.com>
  *           Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -28,101 +25,117 @@
 
 static const struct xvip_video_format xvip_video_formats[] = {
 	{ XVIP_VF_YUV_420, 8, NULL, MEDIA_BUS_FMT_VYYUYY8_1X24,
-	  1, 12, V4L2_PIX_FMT_NV12, 2, 1, 1, 2, "4:2:0, semi-planar, YUV" },
+	  1, 12, V4L2_PIX_FMT_NV12, 2, 1, 1, 2 },
 	{ XVIP_VF_YUV_420, 8, NULL, MEDIA_BUS_FMT_VYYUYY8_1X24,
-	  1, 12, V4L2_PIX_FMT_NV12M, 2, 2, 1, 2, "4:2:0, 2-plane non-cont" },
+	  1, 12, V4L2_PIX_FMT_NV12M, 2, 2, 1, 2 },
 	{ XVIP_VF_YUV_420, 10, NULL, MEDIA_BUS_FMT_VYYUYY10_4X20,
-	  1, 12, V4L2_PIX_FMT_XV15, 2, 1, 2, 2, "4:2:0, 10-bit 2-plane cont" },
+	  1, 12, V4L2_PIX_FMT_XV15, 2, 1, 2, 2 },
 	{ XVIP_VF_YUV_420, 10, NULL, MEDIA_BUS_FMT_VYYUYY10_4X20,
-	  1, 12, V4L2_PIX_FMT_XV15M, 2, 2, 1, 2, "4:2:0, 10-bit 2-plane non-cont" },
+	  1, 12, V4L2_PIX_FMT_XV15M, 2, 2, 1, 2 },
 	{ XVIP_VF_YUV_420, 12, NULL, MEDIA_BUS_FMT_UYYVYY12_4X24,
-	  1, 12, V4L2_PIX_FMT_X012, 2, 1, 2, 2, "4:2:0, 12-bit 2-plane cont" },
+	  1, 12, V4L2_PIX_FMT_X012, 2, 1, 2, 2 },
 	{ XVIP_VF_YUV_420, 12, NULL, MEDIA_BUS_FMT_UYYVYY12_4X24,
-	  1, 12, V4L2_PIX_FMT_X012M, 2, 2, 1, 2, "4:2:0, 12-bit 2-plane non-cont" },
+	  1, 12, V4L2_PIX_FMT_X012M, 2, 2, 1, 2 },
 	{ XVIP_VF_YUV_420, 16, NULL, MEDIA_BUS_FMT_UYYVYY16_4X32,
-	  2, 12, V4L2_PIX_FMT_X016, 2, 1, 2, 2, "4:2:0, 16-bit 2-plane cont" },
+	  2, 12, V4L2_PIX_FMT_X016, 2, 1, 2, 2 },
 	{ XVIP_VF_YUV_420, 16, NULL, MEDIA_BUS_FMT_UYYVYY16_4X32,
-	  2, 12, V4L2_PIX_FMT_X016M, 2, 2, 1, 2, "4:2:0, 16-bit 2-plane non-cont" },
+	  2, 12, V4L2_PIX_FMT_X016M, 2, 2, 1, 2 },
 	{ XVIP_VF_YUV_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
-	  2, 16, V4L2_PIX_FMT_YUYV, 1, 1, 2, 1, "4:2:2, packed, YUYV" },
+	  1, 16, V4L2_PIX_FMT_NV16, 2, 1, 1, 1 },
+	{ XVIP_VF_YUV_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
+	  1, 16, V4L2_PIX_FMT_NV16M, 2, 2, 1, 1 },
+	{ XVIP_VF_YUV_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
+	  2, 16, V4L2_PIX_FMT_YUYV, 1, 1, 2, 1 },
 	{ XVIP_VF_VUY_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
-	  2, 16, V4L2_PIX_FMT_UYVY, 1, 1, 2, 1, "4:2:2, packed, UYVY" },
-	{ XVIP_VF_YUV_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
-	  1, 16, V4L2_PIX_FMT_NV16, 2, 1, 1, 1, "4:2:2, semi-planar, YUV" },
-	{ XVIP_VF_YUV_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
-	  1, 16, V4L2_PIX_FMT_NV16M, 2, 2, 1, 1, "4:2:2, 2-plane non-contiguous" },
+	  2, 16, V4L2_PIX_FMT_UYVY, 1, 1, 2, 1 },
 	{ XVIP_VF_YUV_422, 10, NULL, MEDIA_BUS_FMT_UYVY10_1X20,
-	  1, 16, V4L2_PIX_FMT_XV20, 2, 1, 2, 1, "4:2:2, 10-bit 2-plane cont" },
+	  1, 16, V4L2_PIX_FMT_XV20, 2, 1, 2, 1 },
 	{ XVIP_VF_YUV_422, 10, NULL, MEDIA_BUS_FMT_UYVY10_1X20,
-	  1, 16, V4L2_PIX_FMT_XV20M, 2, 2, 1, 1, "4:2:2, 10-bit 2-plane non-cont" },
+	  1, 16, V4L2_PIX_FMT_XV20M, 2, 2, 1, 1 },
 	{ XVIP_VF_YUV_422, 12, NULL, MEDIA_BUS_FMT_UYVY12_1X24,
-	  1, 16, V4L2_PIX_FMT_X212, 2, 1, 2, 1, "4:2:2, 12-bit 2-plane cont" },
+	  1, 16, V4L2_PIX_FMT_X212, 2, 1, 2, 1 },
 	{ XVIP_VF_YUV_422, 12, NULL, MEDIA_BUS_FMT_UYVY12_1X24,
-	  1, 16, V4L2_PIX_FMT_X212M, 2, 2, 1, 1, "4:2:2, 12-bit 2-plane non-cont" },
-	{ XVIP_VF_YUV_422, 16, NULL, MEDIA_BUS_FMT_UYVY12_1X24,
-	  2, 16, V4L2_PIX_FMT_X216, 2, 1, 2, 1, "4:2:2, 16-bit 2-plane cont" },
-	{ XVIP_VF_YUV_422, 16, NULL, MEDIA_BUS_FMT_UYVY12_1X24,
-	  2, 16, V4L2_PIX_FMT_X216M, 2, 2, 1, 1, "4:2:2, 16-bit 2-plane non-cont" },
+	  1, 16, V4L2_PIX_FMT_X212M, 2, 2, 1, 1 },
+	{ XVIP_VF_YUV_422, 16, NULL, MEDIA_BUS_FMT_UYVY16_2X32,
+	  2, 16, V4L2_PIX_FMT_X216, 2, 1, 2, 1 },
+	{ XVIP_VF_YUV_422, 16, NULL, MEDIA_BUS_FMT_UYVY16_2X32,
+	  2, 16, V4L2_PIX_FMT_X216M, 2, 2, 1, 1 },
 	{ XVIP_VF_YUV_444, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
-	  3, 24, V4L2_PIX_FMT_VUY24, 1, 1, 1, 1, "4:4:4, packed, YUYV" },
+	  3, 24, V4L2_PIX_FMT_VUY24, 1, 1, 1, 1 },
+	{ XVIP_VF_YUV_444, 10, NULL, MEDIA_BUS_FMT_VUY10_1X30,
+	  1, 24, V4L2_PIX_FMT_X403, 3, 1, 1, 1 },
+	{ XVIP_VF_YUV_444, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
+	  1, 24, V4L2_PIX_FMT_YUV444P, 3, 1, 1, 1 },
+	{ XVIP_VF_YUV_444, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
+	  1, 8, V4L2_PIX_FMT_YUV444M, 3, 3, 1, 1 },
 	{ XVIP_VF_YUVX, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
-	  4, 32, V4L2_PIX_FMT_XVUY32, 1, 1, 1, 1, "X:4:4:4, packed, YUYV" },
+	  4, 32, V4L2_PIX_FMT_XVUY32, 1, 1, 1, 1 },
 	{ XVIP_VF_YUVX, 10, NULL, MEDIA_BUS_FMT_VUY10_1X30,
-	  3, 32, V4L2_PIX_FMT_XVUY10, 1, 1, 1, 1, "2:10:10:10, packed, XVUY" },
+	  3, 32, V4L2_PIX_FMT_XVUY10, 1, 1, 1, 1 },
 	{ XVIP_VF_YUV_444, 12, NULL, MEDIA_BUS_FMT_VUY12_1X36,
-	  1, 24, V4L2_PIX_FMT_X412, 1, 1, 1, 1, "4:4:4, 12-bit 2-plane cont" },
+	  1, 24, V4L2_PIX_FMT_X412, 1, 1, 1, 1 },
 	{ XVIP_VF_YUV_444, 12, NULL, MEDIA_BUS_FMT_VUY12_1X36,
-	  1, 24, V4L2_PIX_FMT_X412M, 1, 1, 1, 1, "4:4:4, 12-bit 2-plane non-cont" },
+	  1, 24, V4L2_PIX_FMT_X412M, 1, 1, 1, 1 },
 	{ XVIP_VF_YUV_444, 16, NULL, MEDIA_BUS_FMT_VUY16_1X48,
-	  2, 24, V4L2_PIX_FMT_X416, 1, 1, 1, 1, "4:4:4, 16-bit 2-plane cont" },
+	  2, 24, V4L2_PIX_FMT_X416, 1, 1, 1, 1 },
 	{ XVIP_VF_YUV_444, 16, NULL, MEDIA_BUS_FMT_VUY16_1X48,
-	  2, 24, V4L2_PIX_FMT_X416M, 1, 1, 1, 1, "4:4:4, 16-bit 2-plane non-cont" },
+	  2, 24, V4L2_PIX_FMT_X416M, 1, 1, 1, 1 },
 	{ XVIP_VF_RBG, 8, NULL, MEDIA_BUS_FMT_RBG888_1X24,
-	  3, 24, V4L2_PIX_FMT_BGR24, 1, 1, 1, 1, "24-bit RGB" },
+	  3, 24, V4L2_PIX_FMT_BGR24, 1, 1, 1, 1 },
 	{ XVIP_VF_RBG, 8, NULL, MEDIA_BUS_FMT_RBG888_1X24,
-	  3, 24, V4L2_PIX_FMT_RGB24, 1, 1, 1, 1, "24-bit RGB" },
+	  3, 24, V4L2_PIX_FMT_RGB24, 1, 1, 1, 1 },
 	{ XVIP_VF_BGRX, 8, NULL, MEDIA_BUS_FMT_RBG888_1X24,
-	  4, 32, V4L2_PIX_FMT_BGRX32, 1, 1, 1, 1, "x:8:8:8 RGB w/8 bits padding" },
+	  4, 32, V4L2_PIX_FMT_BGRX32, 1, 1, 1, 1 },
 	{ XVIP_VF_XRGB, 8, NULL, MEDIA_BUS_FMT_RBG888_1X24,
-	  4, 32, V4L2_PIX_FMT_XBGR32, 1, 1, 1, 1, "8:8:8:x RGBx w/8 bits padding" },
+	  4, 32, V4L2_PIX_FMT_XBGR32, 1, 1, 1, 1 },
 	{ XVIP_VF_XBGR, 10, NULL, MEDIA_BUS_FMT_RBG101010_1X30,
-	  3, 32, V4L2_PIX_FMT_XBGR30, 1, 1, 1, 1, "2:10:10:10, packed, XBGR" },
+	  3, 32, V4L2_PIX_FMT_XBGR30, 1, 1, 1, 1 },
 	{ XVIP_VF_XBGR, 12, NULL, MEDIA_BUS_FMT_RBG121212_1X36,
-	  3, 40, V4L2_PIX_FMT_XBGR40, 1, 1, 1, 1, "4:12:12:12, packed, XBGR" },
+	  3, 40, V4L2_PIX_FMT_XBGR40, 1, 1, 1, 1 },
 	{ XVIP_VF_RBG, 16, NULL, MEDIA_BUS_FMT_RBG161616_1X48,
-	  6, 48, V4L2_PIX_FMT_BGR48, 1, 1, 1, 1, "48-bit RGB" },
+	  6, 48, V4L2_PIX_FMT_BGR48, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 8, "mono", MEDIA_BUS_FMT_Y8_1X8,
-	  1, 8, V4L2_PIX_FMT_GREY, 1, 1, 1, 1, "Greyscale 8-bit" },
+	  1, 8, V4L2_PIX_FMT_GREY, 1, 1, 1, 1 },
 	{ XVIP_VF_Y_GREY, 10, NULL, MEDIA_BUS_FMT_Y10_1X10,
-	  4, 32, V4L2_PIX_FMT_XY10, 1, 1, 1, 1, "2:10:10:10, Grey, xY1Y2Y3Y4" },
+	  1, 32, V4L2_PIX_FMT_XY10, 1, 1, 1, 1 },
 	{ XVIP_VF_Y_GREY, 12, NULL, MEDIA_BUS_FMT_Y12_1X12,
-	  1, 12, V4L2_PIX_FMT_XY12, 1, 1, 1, 1, "4:12:12:12, packed, xY1Y2Y3" },
+	  1, 12, V4L2_PIX_FMT_XY12, 1, 1, 1, 1 },
 	{ XVIP_VF_Y_GREY, 16, NULL, MEDIA_BUS_FMT_Y16_1X16,
-	  2, 16, V4L2_PIX_FMT_Y16, 1, 1, 1, 1, "Greyscale 16-bit" },
+	  2, 16, V4L2_PIX_FMT_Y16, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 8, "rggb", MEDIA_BUS_FMT_SRGGB8_1X8,
-	  1, 8, V4L2_PIX_FMT_SGRBG8, 1, 1, 1, 1, "Bayer 8-bit RGGB" },
+	  1, 8, V4L2_PIX_FMT_SGRBG8, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 8, "grbg", MEDIA_BUS_FMT_SGRBG8_1X8,
-	  1, 8, V4L2_PIX_FMT_SGRBG8, 1, 1, 1, 1, "Bayer 8-bit GRBG" },
+	  1, 8, V4L2_PIX_FMT_SGRBG8, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 8, "gbrg", MEDIA_BUS_FMT_SGBRG8_1X8,
-	  1, 8, V4L2_PIX_FMT_SGBRG8, 1, 1, 1, 1, "Bayer 8-bit GBRG" },
+	  1, 8, V4L2_PIX_FMT_SGBRG8, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 8, "bggr", MEDIA_BUS_FMT_SBGGR8_1X8,
-	  1, 8, V4L2_PIX_FMT_SBGGR8, 1, 1, 1, 1, "Bayer 8-bit BGGR" },
+	  1, 8, V4L2_PIX_FMT_SBGGR8, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 12, "mono", MEDIA_BUS_FMT_Y12_1X12,
+	  2, 12, V4L2_PIX_FMT_Y12, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "rggb", MEDIA_BUS_FMT_SRGGB10_1X10,
+	  2, 10, V4L2_PIX_FMT_SRGGB10, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "grbg", MEDIA_BUS_FMT_SGRBG10_1X10,
+	  2, 10, V4L2_PIX_FMT_SGRBG10, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "gbrg", MEDIA_BUS_FMT_SGBRG10_1X10,
+	  2, 10, V4L2_PIX_FMT_SGBRG10, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "bggr", MEDIA_BUS_FMT_SBGGR10_1X10,
+	  2, 10, V4L2_PIX_FMT_SBGGR10, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "rggb", MEDIA_BUS_FMT_SRGGB12_1X12,
-	  1, 12, V4L2_PIX_FMT_SRGGB12, 1, 1, 1, 1, "Bayer 12-bit RGGB" },
+	  2, 12, V4L2_PIX_FMT_SRGGB12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "grbg", MEDIA_BUS_FMT_SGRBG12_1X12,
-	  1, 12, V4L2_PIX_FMT_SGRBG12, 1, 1, 1, 1, "Bayer 12-bit GRBG" },
+	  2, 12, V4L2_PIX_FMT_SGRBG12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "gbrg", MEDIA_BUS_FMT_SGBRG12_1X12,
-	  1, 12, V4L2_PIX_FMT_SGBRG12, 1, 1, 1, 1, "Bayer 12-bit GBRG" },
+	  2, 12, V4L2_PIX_FMT_SGBRG12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "bggr", MEDIA_BUS_FMT_SBGGR12_1X12,
-	  1, 12, V4L2_PIX_FMT_SBGGR12, 1, 1, 1, 1, "Bayer 12-bit BGGR" },
+	  2, 12, V4L2_PIX_FMT_SBGGR12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 16, "rggb", MEDIA_BUS_FMT_SRGGB16_1X16,
-	  1, 16, V4L2_PIX_FMT_SRGGB16, 1, 1, 1, 1, "Bayer 16-bit RGGB" },
+	  2, 16, V4L2_PIX_FMT_SRGGB16, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 16, "grbg", MEDIA_BUS_FMT_SGRBG16_1X16,
-	  1, 12, V4L2_PIX_FMT_SGRBG16, 1, 1, 1, 1, "Bayer 16-bit GRBG" },
+	  2, 16, V4L2_PIX_FMT_SGRBG16, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 16, "gbrg", MEDIA_BUS_FMT_SGBRG16_1X16,
-	  1, 12, V4L2_PIX_FMT_SGBRG16, 1, 1, 1, 1, "Bayer 16-bit GBRG" },
-	{ XVIP_VF_MONO_SENSOR, 16, "bggr", MEDIA_BUS_FMT_SBGGR12_1X12,
-	  1, 12, V4L2_PIX_FMT_SBGGR16, 1, 1, 1, 1, "Bayer 16-bit BGGR" },
+	  2, 16, V4L2_PIX_FMT_SGBRG16, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 16, "bggr", MEDIA_BUS_FMT_SBGGR16_1X16,
+	  2, 16, V4L2_PIX_FMT_SBGGR16, 1, 1, 1, 1 },
 };
 
 /**
@@ -153,8 +166,8 @@ EXPORT_SYMBOL_GPL(xvip_get_format_by_code);
  * @fourcc: the format 4CC
  *
  * Return: a pointer to the format information structure corresponding to the
- * given V4L2 format @fourcc, or ERR_PTR if no corresponding format can be
- * found.
+ * given V4L2 format @fourcc. If not found, return a pointer to the first
+ * available format (V4L2_PIX_FMT_YUYV).
  */
 const struct xvip_video_format *xvip_get_format_by_fourcc(u32 fourcc)
 {
@@ -167,7 +180,7 @@ const struct xvip_video_format *xvip_get_format_by_fourcc(u32 fourcc)
 			return format;
 	}
 
-	return ERR_PTR(-EINVAL);
+	return &xvip_video_formats[0];
 }
 EXPORT_SYMBOL_GPL(xvip_get_format_by_fourcc);
 
@@ -185,6 +198,7 @@ void xvip_bpl_scaling_factor(u32 fourcc, u32 *numerator, u32 *denominator)
 	case V4L2_PIX_FMT_XY10:
 	case V4L2_PIX_FMT_XV15:
 	case V4L2_PIX_FMT_XV20:
+	case V4L2_PIX_FMT_X403:
 	case V4L2_PIX_FMT_XV15M:
 	case V4L2_PIX_FMT_XV20M:
 	case V4L2_PIX_FMT_XBGR30:
@@ -225,6 +239,7 @@ void xvip_width_padding_factor(u32 fourcc, u32 *numerator, u32 *denominator)
 	case V4L2_PIX_FMT_XY10:
 	case V4L2_PIX_FMT_XV15:
 	case V4L2_PIX_FMT_XV20:
+	case V4L2_PIX_FMT_X403:
 	case V4L2_PIX_FMT_XV15M:
 	case V4L2_PIX_FMT_XV20M:
 	case V4L2_PIX_FMT_XBGR30:
@@ -266,9 +281,9 @@ EXPORT_SYMBOL_GPL(xvip_width_padding_factor);
 const struct xvip_video_format *xvip_of_get_format(struct device_node *node)
 {
 	const char *pattern = "mono";
-	unsigned int vf_code;
+	unsigned int vf_code = 0;
 	unsigned int i;
-	u32 width;
+	u32 width = 0;
 	int ret;
 
 	ret = of_property_read_u32(node, "xlnx,video-format", &vf_code);
@@ -279,8 +294,13 @@ const struct xvip_video_format *xvip_of_get_format(struct device_node *node)
 	if (ret < 0)
 		return ERR_PTR(ret);
 
-	if (vf_code == XVIP_VF_MONO_SENSOR)
-		of_property_read_string(node, "xlnx,cfa-pattern", &pattern);
+	if (vf_code == XVIP_VF_MONO_SENSOR) {
+		ret = of_property_read_string(node,
+					      "xlnx,cfa-pattern",
+					      &pattern);
+		if (ret < 0)
+			return ERR_PTR(ret);
+	}
 
 	for (i = 0; i < ARRAY_SIZE(xvip_video_formats); ++i) {
 		const struct xvip_video_format *format = &xvip_video_formats[i];
@@ -314,7 +334,7 @@ void xvip_set_format_size(struct v4l2_mbus_framefmt *format,
 	format->width = clamp_t(unsigned int, fmt->format.width,
 				XVIP_MIN_WIDTH, XVIP_MAX_WIDTH);
 	format->height = clamp_t(unsigned int, fmt->format.height,
-			 XVIP_MIN_HEIGHT, XVIP_MAX_HEIGHT);
+				 XVIP_MIN_HEIGHT, XVIP_MAX_HEIGHT);
 }
 EXPORT_SYMBOL_GPL(xvip_set_format_size);
 
@@ -330,7 +350,7 @@ EXPORT_SYMBOL_GPL(xvip_set_format_size);
  * the register, otherwise the bitmask is cleared from the register
  * when the flag @set is false.
  *
- * Fox eample, this function can be used to set a control with a boolean value
+ * Fox example, this function can be used to set a control with a boolean value
  * requested by users. If the caller knows whether to set or clear in the first
  * place, the caller should call xvip_clr() or xvip_set() directly instead of
  * using this function.
@@ -369,10 +389,8 @@ EXPORT_SYMBOL_GPL(xvip_clr_and_set);
 int xvip_init_resources(struct xvip_device *xvip)
 {
 	struct platform_device *pdev = to_platform_device(xvip->dev);
-	struct resource *res;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	xvip->iomem = devm_ioremap_resource(xvip->dev, res);
+	xvip->iomem = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(xvip->iomem))
 		return PTR_ERR(xvip->iomem);
 
@@ -380,8 +398,7 @@ int xvip_init_resources(struct xvip_device *xvip)
 	if (IS_ERR(xvip->clk))
 		return PTR_ERR(xvip->clk);
 
-	clk_prepare_enable(xvip->clk);
-	return 0;
+	return clk_prepare_enable(xvip->clk);
 }
 EXPORT_SYMBOL_GPL(xvip_init_resources);
 
@@ -398,7 +415,7 @@ EXPORT_SYMBOL_GPL(xvip_cleanup_resources);
 /**
  * xvip_enum_mbus_code - Enumerate the media format code
  * @subdev: V4L2 subdevice
- * @cfg: V4L2 subdev pad configuration
+ * @sd_state: V4L2 subdev state
  * @code: returning media bus code
  *
  * Enumerate the media bus code of the subdevice. Return the corresponding
@@ -410,7 +427,7 @@ EXPORT_SYMBOL_GPL(xvip_cleanup_resources);
  * is not valid.
  */
 int xvip_enum_mbus_code(struct v4l2_subdev *subdev,
-			struct v4l2_subdev_pad_config *cfg,
+			struct v4l2_subdev_state *sd_state,
 			struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct v4l2_mbus_framefmt *format;
@@ -424,7 +441,7 @@ int xvip_enum_mbus_code(struct v4l2_subdev *subdev,
 	if (code->index)
 		return -EINVAL;
 
-	format = v4l2_subdev_get_try_format(subdev, cfg, code->pad);
+	format = v4l2_subdev_get_try_format(subdev, sd_state, code->pad);
 
 	code->code = format->code;
 
@@ -435,7 +452,7 @@ EXPORT_SYMBOL_GPL(xvip_enum_mbus_code);
 /**
  * xvip_enum_frame_size - Enumerate the media bus frame size
  * @subdev: V4L2 subdevice
- * @cfg: V4L2 subdev pad configuration
+ * @sd_state: V4L2 subdev state
  * @fse: returning media bus frame size
  *
  * This function is a drop-in implementation of the subdev enum_frame_size pad
@@ -448,7 +465,7 @@ EXPORT_SYMBOL_GPL(xvip_enum_mbus_code);
  * if the index or the code is not valid.
  */
 int xvip_enum_frame_size(struct v4l2_subdev *subdev,
-			 struct v4l2_subdev_pad_config *cfg,
+			 struct v4l2_subdev_state *sd_state,
 			 struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct v4l2_mbus_framefmt *format;
@@ -459,7 +476,7 @@ int xvip_enum_frame_size(struct v4l2_subdev *subdev,
 	if (fse->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		return -EINVAL;
 
-	format = v4l2_subdev_get_try_format(subdev, cfg, fse->pad);
+	format = v4l2_subdev_get_try_format(subdev, sd_state, fse->pad);
 
 	if (fse->index || fse->code != format->code)
 		return -EINVAL;

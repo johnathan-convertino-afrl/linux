@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Xilinx Video Timing Controller
  *
@@ -6,10 +7,6 @@
  *
  * Contacts: Hyun Kwon <hyun.kwon@xilinx.com>
  *           Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -188,7 +185,7 @@ int xvtc_generator_start(struct xvtc_device *xvtc,
 	if (!xvtc->has_generator)
 		return -ENXIO;
 
-	s_rate = config->fps * config->hsize * config->vsize;
+	s_rate = (unsigned long)config->fps * config->hsize * config->vsize;
 	ret = clk_set_rate(xvtc->xvip.clk, s_rate);
 	if (ret < 0)
 		return ret;

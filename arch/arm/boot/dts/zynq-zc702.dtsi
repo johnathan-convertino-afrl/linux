@@ -89,7 +89,7 @@
 
 		sw15_0 {
 			label = "SW15_0";
-			linux,code = <0>; // SW_LID
+			linux,code = <13>; // SW_LINEIN_INSERT
 			linux,input-type = <0x5>; // EV_SW
 			gpios = <&gpio0 56 0>;
 		};
@@ -140,6 +140,7 @@
 		reg = <0x0>;
 		spi-tx-bus-width = <1>;
 		spi-rx-bus-width = <4>;
+		spi-max-frequency = <50000000>;
 		partition@0 {
 			label = "boot";
 			reg = <0x00000000 0x00500000>;

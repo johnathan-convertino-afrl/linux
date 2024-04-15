@@ -76,7 +76,7 @@ int ad9208_is_sync_spi_update_enabled(ad9208_handle_t *h, uint8_t *enabled);
 #define AD9208_SYSREF_CTRL_1_REG       0x0121
 #define AD9208_SYSREF_TRANSITION_SEL(x) (((x)&0x1)<<4)
 #define AD9208_SYSREF_CLK_EDGE_SEL(x)   (((x)&0x1)<<3)
-#define AD9208_SYSREF_NSHOT_IGNORE(x)  (((x)&0x3)<<0)
+#define AD9208_SYSREF_NSHOT_IGNORE(x)  (((x)&0xF)<<0)
 #define AD9208_SYSREF_CTRL_2_REG       0x0122
 #define AD9208_SYSREF_WIN_NEG(x)       (((x)&0x3)<<2)
 #define AD9208_SYSREF_WIN_POS(x)       (((x)&0x3)<<0)
@@ -263,5 +263,11 @@ int ad9208_is_sync_spi_update_enabled(ad9208_handle_t *h, uint8_t *enabled);
 
 #define AD9208_FULL_SCALE_CFG_REG     0x1910
 #define AD9208_TRM_VREF(x)            (((x)&0xF)<<0)
+
+/* AD9680 Registers */
+#define AD9680_CLOCK_DIV_REG		0x10B
+#define AD9680_CLOCK_DIV_PHASE_REG	0x10C
+#define AD9680_INPUT_FS_RANGE_REG	0x025
+#define AD9680_JESD_QUICK_CONF_REG	0x570
 
 #endif /*__AD9208_REG_H__*/

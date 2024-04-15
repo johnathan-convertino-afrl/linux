@@ -6,6 +6,8 @@ menu "Zynq MPSoC Firmware Drivers"
 
 config ZYNQMP_FIRMWARE
 	bool "Enable Xilinx Zynq MPSoC firmware interface"
+	depends on ARCH_ZYNQMP
+	default y if ARCH_ZYNQMP
 	select MFD_CORE
 	help
 	  Firmware interface driver is used by different
@@ -24,7 +26,9 @@ config ZYNQMP_FIRMWARE_DEBUG
 config ZYNQMP_FIRMWARE_SECURE
 	bool "Enable Xilinx Zynq MPSoC secure firmware loading APIs"
 	help
-	  Say yes to enable ZynqMP secure firmware loading APIs.
-	  In doubt, say N
+	  Firmware secure driver is used as an interface to load
+	  Authenticated and/or Encrypted firmware with single loadable
+	  partition. Say yes to enable ZynqMP secure firmware loading
+	  APIs.If in doubt, say N
 
 endmenu

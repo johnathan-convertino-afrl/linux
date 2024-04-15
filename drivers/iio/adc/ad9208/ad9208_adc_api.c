@@ -226,6 +226,9 @@ int ad9208_adc_set_input_scale(ad9208_handle_t *h,
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
 
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
+
 	switch (full_scale_range) {
 	case AD9208_ADC_SCALE_2P04_VPP:
 		fs_val = 0;
@@ -257,6 +260,51 @@ int ad9208_adc_set_input_scale(ad9208_handle_t *h,
 	return API_ERROR_OK;
 }
 
+int ad9208_adc_get_input_scale(ad9208_handle_t *h, uint8_t *full_scale_range)
+{
+	int err;
+	uint8_t tmp_reg;
+
+	if (!h)
+		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (!full_scale_range)
+		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
+
+	err = ad9208_register_read(h,
+				    AD9208_FULL_SCALE_CFG_REG, &tmp_reg);
+	if (err != API_ERROR_OK)
+		return err;
+
+	switch (AD9208_TRM_VREF(tmp_reg)) {
+	case 0:
+		*full_scale_range = AD9208_ADC_SCALE_2P04_VPP;
+		break;
+	case 0x8:
+		*full_scale_range = AD9208_ADC_SCALE_1P13_VPP;
+		break;
+	case 0x9:
+		*full_scale_range = AD9208_ADC_SCALE_1P25_VPP;
+		break;
+	case 0xD:
+		*full_scale_range = AD9208_ADC_SCALE_1P7_VPP;
+		break;
+	case 0xE:
+		*full_scale_range = AD9208_ADC_SCALE_1P81_VPP;
+		break;
+	case 0xF:
+		*full_scale_range = AD9208_ADC_SCALE_1P93_VPP;
+		break;
+	default:
+		return API_ERROR_INVALID_PARAM;
+	}
+
+	return API_ERROR_OK;
+}
+
 static int ad9208_adc_set_vcm_export(ad9208_handle_t *h, uint8_t en)
 {
 	int err;
@@ -264,6 +312,9 @@ static int ad9208_adc_set_vcm_export(ad9208_handle_t *h, uint8_t en)
 
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
 
 	err = ad9208_register_read(h, AD9208_EXT_VCM_CTRL_REG, &tmp_reg);
 	if (err != API_ERROR_OK)
@@ -289,6 +340,10 @@ int ad9208_adc_set_input_cfg(ad9208_handle_t *h,
 
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
+
 	if ((analog_input_mode >= COUPLING_UNKNOWN) || (ext_vref > 1))
 		return API_ERROR_INVALID_PARAM;
 	if ((analog_input_mode == COUPLING_DC) && (ext_vref == 1)) {
@@ -341,6 +396,10 @@ int ad9208_adc_set_input_buffer_cfg(ad9208_handle_t *h,
 
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
+
 	err = ad9208_check_buffer_current(buff_curr_n);
 	if (err != API_ERROR_OK)
 		return err;
@@ -384,6 +443,9 @@ int ad9208_adc_set_dc_offset_filt_en(ad9208_handle_t *h, uint8_t en)
 		return API_ERROR_INVALID_HANDLE_PTR;
 	if (en > 1)
 		return API_ERROR_INVALID_PARAM;
+
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
 
 	err = ad9208_register_read(h, AD9208_DC_OFFSET_CAL_CTRL, &tmp_reg);
 	if (err != API_ERROR_OK)
@@ -581,13 +643,18 @@ int ad9208_adc_set_ddc_dcm(ad9208_handle_t *h, uint8_t ddc_ch, uint8_t dcm)
 	err = ad9208_register_write(h, AD9208_DDCX_CTRL0_REG + offset, tmp_reg);
 	if (err != API_ERROR_OK)
 		return err;
-	tmp_reg &= ~AD9208_DDCX_DCM_FILT_SEL_1(ALL);
-	tmp_reg |= AD9208_DDCX_DCM_FILT_SEL_1(filt_sel_reg_1);
-	err =
-		ad9208_register_write(h, AD9208_DDCX_DATA_SEL_REG + offset,
-				      tmp_reg);
+
+	err = ad9208_register_read(h, AD9208_DDCX_DATA_SEL_REG + offset, &tmp_reg);
 	if (err != API_ERROR_OK)
 		return err;
+
+	tmp_reg &= ~AD9208_DDCX_DCM_FILT_SEL_1(ALL);
+	tmp_reg |= AD9208_DDCX_DCM_FILT_SEL_1(filt_sel_reg_1);
+	err = ad9208_register_write(h, AD9208_DDCX_DATA_SEL_REG + offset,
+				    tmp_reg);
+	if (err != API_ERROR_OK)
+		return err;
+
 	return API_ERROR_OK;
 }
 
@@ -641,6 +708,33 @@ int ad9208_adc_set_ddc_nco_mode(ad9208_handle_t *h,
 	return API_ERROR_OK;
 }
 
+int ad9680_adc_set_ddc_nco_ftw(ad9208_handle_t *h, uint8_t ddc_ch,
+			       uint64_t ftw, uint64_t mod_a, uint64_t mod_b)
+{
+	int err, offset;
+	uint8_t tmp_reg;
+
+	if (h == NULL)
+		return API_ERROR_INVALID_HANDLE_PTR;
+	if (ddc_ch >= AD9208_NOF_FC_MAX)
+		return API_ERROR_INVALID_PARAM;
+	offset = (AD9208_DDCX_REG_OFFSET * ddc_ch);
+
+	err = ad9208_register_write(h, (0x314 + offset),
+				    ADI_GET_BYTE(ftw, 0));
+	if (err != API_ERROR_OK)
+		return err;
+	err = ad9208_register_write(h, (0x315 + offset),
+				    ADI_GET_BYTE(ftw, 8));
+	if (err != API_ERROR_OK)
+		return err;
+
+	ad9208_is_sync_spi_update_enabled(h, &tmp_reg);
+	if (tmp_reg)
+		ad9208_register_chip_transfer(h);
+	return API_ERROR_OK;
+}
+
 int ad9208_adc_set_ddc_nco_ftw(ad9208_handle_t *h, uint8_t ddc_ch,
 			       uint64_t ftw, uint64_t mod_a, uint64_t mod_b)
 {
@@ -649,6 +743,10 @@ int ad9208_adc_set_ddc_nco_ftw(ad9208_handle_t *h, uint8_t ddc_ch,
 
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (h->model == 0x9680)
+		return ad9680_adc_set_ddc_nco_ftw(h, ddc_ch, ftw, 0, 0);
+
 	if (ddc_ch >= AD9208_NOF_FC_MAX)
 		return API_ERROR_INVALID_PARAM;
 	offset = (AD9208_DDCX_REG_OFFSET * ddc_ch);
@@ -781,6 +879,10 @@ int ad9208_adc_set_ddc_nco(ad9208_handle_t *h, uint8_t ddc_ch,
 
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
+
+	if (!carrier_freq_hz)
+		return API_ERROR_INVALID_PARAM;
+
 	if (!((carrier_freq_hz >= (int64_t) (0ll - h->adc_clk_freq_hz / 2)) &&
 	      (carrier_freq_hz < (int64_t) (h->adc_clk_freq_hz / 2))))
 		return API_ERROR_INVALID_PARAM;
@@ -804,7 +906,7 @@ int ad9208_adc_set_ddc_nco(ad9208_handle_t *h, uint8_t ddc_ch,
 		 *  value is integer power of 2
 		 */
 		tmp_freq = DIV_U64(h->adc_clk_freq_hz, carrier_freq_hz);
-		tmp_freq = DIV_U64(ADI_POW2_48, tmp_freq);
+		tmp_freq = DIV_U64(h->model != 0x9680 ? ADI_POW2_48 : ADI_POW2_12, tmp_freq);
 
 		/* Write FTW */
 		err = ad9208_adc_set_ddc_nco_ftw(h, ddc_ch, tmp_freq, 0, 0);
@@ -834,9 +936,9 @@ int ad9208_adc_set_ddc_nco(ad9208_handle_t *h, uint8_t ddc_ch,
 			ftw = DIV_U64(M * ((uint64_t) 1u << i), N);
 			ftw *= ((uint64_t) 1u << (48 - i));
 		} else
-			ftw = DIV_U64(M * (ADI_POW2_48), N);
+			ftw = DIV_U64(M * (h->model != 0x9680 ? ADI_POW2_48 : ADI_POW2_12), N);
 
-		adi_api_utils_mult_128(M, ADI_POW2_48, &tmp_ah, &tmp_al);
+		adi_api_utils_mult_128(M, h->model != 0x9680 ? ADI_POW2_48 : ADI_POW2_12, &tmp_ah, &tmp_al);
 		adi_api_utils_mod_128(tmp_ah, tmp_al, N, &tmp_fl);
 
 		maw = tmp_fl;
@@ -887,13 +989,19 @@ int ad9208_adc_set_ddc_nco_reset(ad9208_handle_t *h)
 int ad9208_adc_set_clk_phase(ad9208_handle_t *h, uint8_t phase_adj)
 {
 	int err;
+	uint16_t addr;
 
 	if (h == NULL)
 		return API_ERROR_INVALID_HANDLE_PTR;
 	if (phase_adj > AD9208_IP_CLK_PHASE_ADJ(ALL))
 		return API_ERROR_INVALID_PARAM;
 
-	err = ad9208_register_write(h, AD9208_IP_CLK_PHASE_ADJ_REG, phase_adj);
+	if (h->model == 0x9680)
+		addr = AD9680_CLOCK_DIV_PHASE_REG;
+	else
+		addr = AD9208_IP_CLK_PHASE_ADJ_REG;
+
+	err = ad9208_register_write(h, addr, phase_adj);
 	if (err != API_ERROR_OK)
 		return err;
 
@@ -909,6 +1017,9 @@ int ad9208_adc_temp_sensor_set_enable(ad9208_handle_t *h, uint8_t en)
 		return API_ERROR_INVALID_HANDLE_PTR;
 	if (en > 1)
 		return API_ERROR_INVALID_PARAM;
+
+	if (h->model == 0x9680) /* N/A */
+		return API_ERROR_NOT_SUPPORTED;
 
 	err = ad9208_adc_set_vcm_export(h, 0x0);
 	if (err != API_ERROR_OK)

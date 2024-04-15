@@ -9,26 +9,29 @@ The Video Mixer always has one streaming input layer, known as master layer.
 
 Required properties:
  - compatible: Must contain atleast one of
+	"xlnx,mixer-5.0" (MIXER 5.0 version)
 	"xlnx,mixer-4.0" (MIXER 4.0 version)
 	"xlnx,mixer-3.0" (MIXER 3.0 version)
  - reg: Base address and size of the IP core.
  - interrupts: Interrupt number.
  - interrupts-parent: phandle for interrupt controller.
  - reset-gpio: gpio to reset the mixer IP
+ - xlnx,enable-csc-coefficient-register: denotes colorimetry
+   coefficients can be programmed, valid for mixer 5.0 version only.
  - xlnx,dma-addr-width: dma address width, valid values are 32 and 64
  - xlnx,bpc: bits per component for mixer
  - xlnx,ppc: pixel per clock for mixer
  - xlnx,num-layers: Total number of layers (excluding logo)
    Value ranges from 1-9 for compatible string xlnx,mixer-3.0 and
-   Value ranges from 1-17 for comptaible string xlnx,mixer-4.0
+   Value ranges from 1-17 for comptaible string xlnx,mixer-4.0 and above
  - layer_[x]: node for [x] layer
  - xlnx,layer-id: layer identifier number
  - xlnx,vformat: video format for layer. See list of supported formats below.
  - xlnx,layer-max-width: max layer width, mandatory for master layer
    for overlay layers if scaling is alowed then this is mandatory otherwise
-   not required for overlay layers
+   not required for overlay layers. Valid range is 64 to 8192
  - xlnx,layer-max-height: max layer height, mandatory for master layer
-   Not required for overlay layers
+   Not required for overlay layers. Valid range is 64 to 4320
  - xlnx,layer-primary: denotes the primary layer, should be mentioned in node
    of layer which is expected to be constructing the primary plane
 
@@ -46,6 +49,9 @@ Optional properties:
  - logo: logo layer
  - xlnx,bridge: phandle to bridge node.
    This handle is required only when VTC is connected as bridge.
+ - memory-region: phandle to /reserved-memory node.
+   If memory is reserved for special use by mixer then this node
+   can be used to refer and use from this reserved memory region.
 
 Supported Formats:
 	Mixer IP Format		Driver supported Format String
@@ -161,3 +167,45 @@ Example:
 			xlnx,logo-width = <64>;
 		};
 	};
+Example using reserved memory:
+Reserving from 32bit Shared CMA pool of 512MiB using System RAM:
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/ {
+	reserved-memory {
+		#address-cells = <0x2>;
+		#size-cells = <0x2>;
+		ranges;
+		psmem_multimedia: multimedia_cma_mem_region {
+			compatible = "shared-dma-pool";
+			reg = <0x00 0x40000000 0x00 0x20000000>;
+			reusable;
+		};
+	};
+};
+...
+	v_mix_0: v_mix@80100000 {
+		/* ... */
+		memory-region = <&psmem_multimedia>;
+	};
+
+Reserving from 64bit Shared DMA pool of 1792 MiB using external PL based
+DDR memory:
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/ {
+	reserved-memory {
+		#address-cells = <0x2>;
+		#size-cells = <0x2>;
+		ranges;
+		plmem_multimedia: multimedia_dma_mem_region {
+			compatible = "shared-dma-pool";
+			no-map;
+			reg = <0x48 0x0 0x0 0x70000000>;
+		};
+	};
+
+};
+...
+	v_mix_0: v_mix@80100000 {
+		/* ... */
+		memory-region = <&plmem_multimedia>;
+	}

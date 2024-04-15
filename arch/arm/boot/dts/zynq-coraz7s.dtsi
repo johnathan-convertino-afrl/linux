@@ -5,7 +5,7 @@
  *
  * SPDX-License-Identifier:	GPL-2.0+
  */
-/dts-v1/;
+
 #include "zynq-7000.dtsi"
 
 / {
@@ -28,23 +28,22 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	usb_phy0: phy0@e0002000 {
-		compatible = "ulpi-phy";
-		#phy-cells = <0>;
-		reg = <0xe0002000 0x1000>;
-		view-port = <0x0170>;
-		drv-vbus;
-	};
-
 	fpga_axi: fpga-axi@0 {
 		compatible = "simple-bus";
 		#address-cells = <0x1>;
 		#size-cells = <0x1>;
 		ranges;
+
+		axi_sysid_0: axi-sysid-0@45000000 {
+			compatible = "adi,axi-sysid-1.00.a";
+			reg = <0x45000000 0x10000>;
+		};
 	};
 };
 
-/delete-node/ &cpu1;
+&cpu1 {
+	status = "disabled";
+};
 
 &clkc {
 	ps-clk-frequency = <50000000>;
@@ -74,6 +73,5 @@
 &usb0 {
 	status = "okay";
 	dr_mode = "host";
-	usb-phy = <&usb_phy0>;
 };
 

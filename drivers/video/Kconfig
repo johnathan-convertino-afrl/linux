@@ -1,8 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # Video configuration
 #
 
 menu "Graphics support"
+
+config APERTURE_HELPERS
+	bool
+	help
+	  Support tracking and hand-over of aperture ownership. Required
+	  by graphics drivers for firmware-provided framebuffers.
 
 if HAS_IOMEM
 
@@ -35,6 +42,16 @@ config HDMI
 	bool
 
 endif # HAS_IOMEM
+
+config FB_ALTERA_VIP
+	tristate "Altera VIP Frame Reader framebuffer support"
+	depends on FB
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	help
+	  This driver supports the Altera Video and Image Processing(VIP)
+	  Frame Reader
 
 if VT
 	source "drivers/video/console/Kconfig"

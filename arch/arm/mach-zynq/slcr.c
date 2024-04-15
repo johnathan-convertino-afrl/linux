@@ -1,17 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Xilinx SLCR driver
  *
  * Copyright (c) 2011-2013 Xilinx Inc.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA
- * 02139, USA.
  */
 
 #include <linux/io.h>
@@ -31,7 +22,6 @@
 #define SLCR_PSS_IDCODE			0x530 /* PS IDCODE */
 #define SLCR_L2C_RAM			0xA1C /* L2C_RAM in AR#54190 */
 #define SLCR_LVL_SHFTR_EN_OFFSET	0x900 /* Level Shifters Enable */
-#define SLCR_OCM_CFG_OFFSET		0x910 /* OCM Address Mapping */
 
 #define SLCR_UNLOCK_MAGIC		0xDF0D
 #define SLCR_A9_CPU_CLKSTOP		0x10
@@ -135,19 +125,6 @@ static struct notifier_block zynq_slcr_restart_nb = {
 	.notifier_call	= zynq_slcr_system_restart,
 	.priority	= 192,
 };
-
-/**
- * zynq_slcr_get_ocm_config - Get SLCR OCM config
- *
- * return:	OCM config bits
- */
-u32 zynq_slcr_get_ocm_config(void)
-{
-	u32 ret;
-
-	zynq_slcr_read(&ret, SLCR_OCM_CFG_OFFSET);
-	return ret;
-}
 
 /**
  * zynq_slcr_init_preload_fpga - Disable communication from the PL to PS.

@@ -1,3 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Analog Devices AD-FMCOMMS4-EBZ
+ * https://wiki.analog.com/resources/eval/user-guides/ad-fmcomms4-ebz
+ *
+ * hdl_project: <fmcomms2/zc702>
+ * board_revision: <>
+ *
+ * Copyright (C) 2014-2020 Analog Devices Inc.
+ */
 /dts-v1/;
 
 #include "zynq-zc702.dtsi"
@@ -6,7 +16,7 @@
 &fpga_axi {
 	rx_dma: dma@7c400000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c400000 0x10000>;
+		reg = <0x7c400000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -27,7 +37,7 @@
 
 	tx_dma: dma@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;

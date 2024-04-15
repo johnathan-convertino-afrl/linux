@@ -68,12 +68,12 @@ static irqreturn_t xlnx_spdifrx_irq_handler(int irq, void *arg)
 	u32 val;
 	struct spdif_dev_data *ctx = arg;
 
-	val = readl(ctx->base + XSPDIF_IRQ_STS_REG);
+	val = ioread32(ctx->base + XSPDIF_IRQ_STS_REG);
 	if (val & XSPDIF_IRQ_STS_CH_STS_MASK) {
 		writel(val & XSPDIF_IRQ_STS_CH_STS_MASK,
 		       ctx->base + XSPDIF_IRQ_STS_REG);
-		val = readl(ctx->base +
-			    XSPDIF_IRQ_ENABLE_REG);
+		val = ioread32(ctx->base +
+			       XSPDIF_IRQ_ENABLE_REG);
 		writel(val & ~XSPDIF_IRQ_STS_CH_STS_MASK,
 		       ctx->base + XSPDIF_IRQ_ENABLE_REG);
 
@@ -91,7 +91,7 @@ static int xlnx_spdif_startup(struct snd_pcm_substream *substream,
 	u32 val;
 	struct spdif_dev_data *ctx = dev_get_drvdata(dai->dev);
 
-	val = readl(ctx->base + XSPDIF_CONTROL_REG);
+	val = ioread32(ctx->base + XSPDIF_CONTROL_REG);
 	val |= XSPDIF_CONTROL_FIFO_FLUSH_MASK;
 	writel(val, ctx->base + XSPDIF_CONTROL_REG);
 
@@ -151,7 +151,7 @@ static int xlnx_spdif_hw_params(struct snd_pcm_substream *substream,
 		return -EINVAL;
 	}
 
-	val = readl(ctx->base + XSPDIF_CONTROL_REG);
+	val = ioread32(ctx->base + XSPDIF_CONTROL_REG);
 	val &= ~XSPDIF_CONTROL_CLK_CFG_MASK;
 	val |= clk_cfg << XSPDIF_CONTROL_CLK_CFG_SHIFT;
 	writel(val, ctx->base + XSPDIF_CONTROL_REG);
@@ -185,7 +185,7 @@ static int xlnx_spdif_trigger(struct snd_pcm_substream *substream, int cmd,
 	int ret = 0;
 	struct spdif_dev_data *ctx = dev_get_drvdata(dai->dev);
 
-	val = readl(ctx->base + XSPDIF_CONTROL_REG);
+	val = ioread32(ctx->base + XSPDIF_CONTROL_REG);
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
@@ -239,6 +239,7 @@ static struct snd_soc_dai_driver xlnx_spdif_rx_dai = {
 
 static const struct snd_soc_component_driver xlnx_spdif_component = {
 	.name = "xlnx-spdif",
+	.legacy_dai_naming = 1,
 };
 
 static const struct of_device_id xlnx_spdif_of_match[] = {
@@ -250,7 +251,6 @@ MODULE_DEVICE_TABLE(of, xlnx_spdif_of_match);
 static int xlnx_spdif_probe(struct platform_device *pdev)
 {
 	int ret;
-	struct resource *res;
 	struct snd_soc_dai_driver *dai_drv;
 	struct spdif_dev_data *ctx;
 
@@ -273,8 +273,7 @@ static int xlnx_spdif_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	ctx->base = devm_ioremap_resource(dev, res);
+	ctx->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(ctx->base)) {
 		ret = PTR_ERR(ctx->base);
 		goto axi_clk_err;
@@ -300,13 +299,10 @@ static int xlnx_spdif_probe(struct platform_device *pdev)
 			goto axi_clk_err;
 		}
 
-		res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-		if (!res) {
-			dev_err(dev, "No IRQ resource found\n");
-			ret = -ENODEV;
-			goto axi_clk_err;
-		}
-		ret = devm_request_irq(dev, res->start,
+		ret = platform_get_irq(pdev, 0);
+		if (ret < 0)
+			goto clk_err;
+		ret = devm_request_irq(dev, ret,
 				       xlnx_spdifrx_irq_handler,
 				       0, "XLNX_SPDIF_RX", ctx);
 		if (ret) {

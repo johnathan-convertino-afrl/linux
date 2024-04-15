@@ -127,7 +127,7 @@
 			vref-supply = <&ref_1V2>;
 		};
 
-		dac@0f {
+		dac@f {
 			compatible = "adi,ad5627";
 			reg = <0x0f>;
 
@@ -135,7 +135,7 @@
 		};
 
 		current_limiter@5a {
-			compatible = "adi,adm1177";
+			compatible = "adi,adm1177-iio";
 			reg = <0x5a>;
 			adi,r-sense-mohm = <100>; /* 100 mOhm */
 			adi,shutdown-threshold-ma = <1059>; /* 1.059 A */
@@ -150,7 +150,7 @@
 
 	rx_dma0: dma@7c440000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c440000 0x10000>;
+		reg = <0x7c440000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 54 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 15>;
@@ -164,7 +164,7 @@
 /*
 	rx_dma1: dma@7c440000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c460000 0x10000>;
+		reg = <0x7c460000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 36 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 15>;
@@ -177,7 +177,7 @@
 */
 	tx_dma: dma@7c480000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c480000 0x10000>;
+		reg = <0x7c480000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 52 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 15>;
@@ -213,14 +213,15 @@
 	logic_analyzer_clkgen: clock@7000000 {
 		compatible = "adi,axi-clkgen-2.00.a";
 		reg = <0x70000000 0x10000>;
-		clocks = <&clkc 16>;
+		clocks = <&clkc 15>, <&clkc 16>;
+		clock-names = "s_axi_aclk", "clkin1";
 
 		#clock-cells = <0>;
 	};
 
 	logic_analyzer_rx_dma: dma@7c400000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c400000 0x10000>;
+		reg = <0x7c400000 0x1000>;
 
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
@@ -235,7 +236,7 @@
 
 	logic_analyzer_tx_dma: dma@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 
 		#dma-cells = <1>;
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;

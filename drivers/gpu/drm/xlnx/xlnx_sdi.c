@@ -9,13 +9,19 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
-#include <drm/drmP.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/display/drm_dp_helper.h>
+#include <drm/display/drm_hdmi_helper.h>
+#include <linux/bitfield.h>
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/component.h>
 #include <linux/device.h>
+#include <linux/gpio/consumer.h>
 #include <linux/of_device.h>
 #include <linux/of_graph.h>
 #include <linux/phy/phy.h>
+#include <media/hdr-ctrls.h>
 #include <video/videomode.h>
 #include "xlnx_sdi_modes.h"
 #include "xlnx_sdi_timing.h"
@@ -38,6 +44,7 @@
 #define XSDI_TX_ST352_DATA_DS2		0x70
 
 /* MODULE_CTRL register masks */
+#define XSDI_TX_CTRL_HFR		BIT(3)
 #define XSDI_TX_CTRL_M			BIT(7)
 #define XSDI_TX_CTRL_INS_CRC		BIT(12)
 #define XSDI_TX_CTRL_INS_ST352		BIT(13)
@@ -53,6 +60,7 @@
 #define XSDI_TX_CTRL_MUX_SHIFT		8
 #define XSDI_TX_CTRL_ST352_F2_EN_SHIFT	15
 #define XSDI_TX_CTRL_420_BIT		BIT(21)
+#define XSDI_TX_CTRL_444_BIT		BIT(22)
 #define XSDI_TX_CTRL_INS_ST352_CHROMA	BIT(23)
 #define XSDI_TX_CTRL_USE_DS2_3GA	BIT(24)
 
@@ -63,13 +71,15 @@
 /* ISR STAT register masks */
 #define XSDI_GTTX_RSTDONE_INTR		BIT(0)
 #define XSDI_TX_CE_ALIGN_ERR_INTR	BIT(1)
+#define XSDI_TX_VSYNC_INTR		BIT(2)
 #define XSDI_AXI4S_VID_LOCK_INTR	BIT(8)
 #define XSDI_OVERFLOW_INTR		BIT(9)
 #define XSDI_UNDERFLOW_INTR		BIT(10)
 #define XSDI_IER_EN_MASK		(XSDI_GTTX_RSTDONE_INTR | \
-					XSDI_TX_CE_ALIGN_ERR_INTR | \
-					XSDI_OVERFLOW_INTR | \
-					XSDI_UNDERFLOW_INTR)
+					 XSDI_TX_CE_ALIGN_ERR_INTR | \
+					 XSDI_TX_VSYNC_INTR | \
+					 XSDI_OVERFLOW_INTR | \
+					 XSDI_UNDERFLOW_INTR)
 
 /* RST_CTRL_OFFSET masks */
 #define XSDI_TX_CTRL_EN			BIT(0)
@@ -90,8 +100,19 @@
 #define XST352_PROG_PIC			BIT(6)
 #define XST352_PROG_TRANS		BIT(7)
 #define XST352_2048_SHIFT		BIT(6)
+#define XST352_YUV444_MASK		0x01
 #define XST352_YUV420_MASK		0x03
 #define ST352_BYTE3			0x00
+
+/* Electro Optical Transfer Function */
+#define XST352_BYTE2_EOTF_MASK		GENMASK(13, 12)
+#define XST352_BYTE2_EOTF_SDRTV		0x0
+#define XST352_BYTE2_EOTF_HLG		0x1
+#define XST352_BYTE2_EOTF_SMPTE2084	0x2
+#define XST352_BYTE2_EOTF_UNKNOWN	0x3
+#define XST352_BYTE3_COLORIMETRY_HD	BIT(23)
+#define XST352_BYTE3_COLORIMETRY	BIT(21)
+
 #define ST352_BYTE4			0x01
 #define GT_TIMEOUT			50
 /* SDI modes */
@@ -103,6 +124,9 @@
 #define	XSDI_MODE_12G			5
 
 #define SDI_TIMING_PARAMS_SIZE		48
+#define CLK_RATE			148500000UL
+
+#define XSDI_HFR_MIN_FPS		90
 
 /**
  * enum payload_line_1 - Payload Ids Line 1 number
@@ -133,6 +157,7 @@ enum payload_line_2 {
  * @encoder: DRM encoder structure
  * @connector: DRM connector structure
  * @dev: device structure
+ * @gt_rst_gpio: GPIO handle to reset GT phy
  * @base: Base address of SDI subsystem
  * @mode_flags: SDI operation mode related flags
  * @wait_event: wait event
@@ -154,6 +179,8 @@ enum payload_line_2 {
  * @sdi_420_in_val: 1 for yuv420 and 0 for yuv422
  * @sdi_420_out: configurable SDI out color format parameter
  * @sdi_420_out_val: 1 for yuv420 and 0 for yuv422
+ * @sdi_444_out: configurable SDI out color format parameter
+ * @sdi_444_out_val: 1 for yuv444 and 0 for yuv422
  * @is_frac_prop: configurable SDI fractional fps parameter
  * @is_frac_prop_val: configurable SDI fractional fps parameter value
  * @bridge: bridge structure
@@ -169,15 +196,22 @@ enum payload_line_2 {
  * @en_st352_c_val: configurable ST352 payload on Chroma parameter value
  * @use_ds2_3ga_prop: Use DS2 instead of DS3 in 3GA mode parameter
  * @use_ds2_3ga_val: Use DS2 instead of DS3 in 3GA mode parameter value
+ * @c_encoding: configurable color encoding
+ * @c_encoding_prop_val: 1 for UHDTV and 0 for Rec709
  * @video_mode: current display mode
  * @axi_clk: AXI Lite interface clock
  * @sditx_clk: SDI Tx Clock
  * @vidin_clk: Video Clock
+ * @qpll1_enabled: indicates qpll1 presence
+ * @picxo_enabled: indicates picxo core presence
+ * @prev_eotf: previous end of transfer function
+ * @is_hfr: Indicates HFR video streaming
  */
 struct xlnx_sdi {
 	struct drm_encoder encoder;
 	struct drm_connector connector;
 	struct device *dev;
+	struct gpio_desc *gt_rst_gpio;
 	void __iomem *base;
 	u32 mode_flags;
 	wait_queue_head_t wait_event;
@@ -192,6 +226,8 @@ struct xlnx_sdi {
 	bool sdi_420_in_val;
 	struct drm_property *sdi_420_out;
 	bool sdi_420_out_val;
+	struct drm_property *sdi_444_out;
+	bool sdi_444_out_val;
 	struct drm_property *is_frac_prop;
 	bool is_frac_prop_val;
 	struct xlnx_bridge *bridge;
@@ -207,10 +243,16 @@ struct xlnx_sdi {
 	bool en_st352_c_val;
 	struct drm_property *use_ds2_3ga_prop;
 	bool use_ds2_3ga_val;
+	struct drm_property *c_encoding;
+	u32 c_encoding_prop_val;
 	struct drm_display_mode video_mode;
 	struct clk *axi_clk;
 	struct clk *sditx_clk;
 	struct clk *vidin_clk;
+	bool qpll1_enabled;
+	bool picxo_enabled;
+	u8 prev_eotf;
+	u8 is_hfr;
 };
 
 #define connector_to_sdi(c) container_of(c, struct xlnx_sdi, connector)
@@ -257,6 +299,84 @@ static void xlnx_sdi_en_bridge(struct xlnx_sdi *sdi)
 }
 
 /**
+ * xlnx_sdi_gt_reset - Reset cores through gpio
+ * @sdi: Pointer to SDI Tx structure
+ *
+ * This function resets the GT phy core.
+ */
+static void xlnx_sdi_gt_reset(struct xlnx_sdi *sdi)
+{
+	gpiod_set_value(sdi->gt_rst_gpio, 1);
+	gpiod_set_value(sdi->gt_rst_gpio, 0);
+	/* delay added to get vtc_en signal */
+	mdelay(5);
+}
+
+/**
+ * xlnx_sdi_set_eotf - Set eotf field in payload
+ * @sdi: Pointer to SDI Tx structure
+ *
+ * This function parse the hdr metadata and sets
+ * eotf and colorimetry fields of payload.
+ */
+static void xlnx_sdi_set_eotf(struct xlnx_sdi *sdi)
+{
+	struct hdmi_drm_infoframe frame;
+	struct drm_connector_state *state = sdi->connector.state;
+	u32 payload, i;
+	int ret;
+	u8 eotf, colori;
+
+	ret = drm_hdmi_infoframe_set_gen_hdr_metadata(&frame, state);
+	if (ret)
+		return;
+
+	eotf = (__u8)frame.eotf;
+
+	if (sdi->prev_eotf == eotf || eotf > XST352_BYTE2_EOTF_UNKNOWN)
+		return;
+
+	switch (eotf) {
+	case V4L2_EOTF_BT_2100_HLG:
+		eotf = XST352_BYTE2_EOTF_HLG;
+		break;
+	case V4L2_EOTF_TRADITIONAL_GAMMA_SDR:
+		eotf = XST352_BYTE2_EOTF_SDRTV;
+		break;
+	case V4L2_EOTF_SMPTE_ST2084:
+		eotf = XST352_BYTE2_EOTF_SMPTE2084;
+		break;
+	}
+
+	colori = sdi->c_encoding_prop_val;
+	payload = xlnx_sdi_readl(sdi->base, XSDI_TX_ST352_DATA_CH0);
+
+	/*
+	 * For HD mode, bit 23 and 20 of payload represents
+	 * colorimetry as per SMPTE 292-1:2018 Sec 9.5.
+	 * For other modes, its bit 21 and 20.
+	 * For BT709 & BT2020 - bit 20 is always zero
+	 */
+	if (sdi->sdi_mod_prop_val == XSDI_MODE_HD) {
+		payload &= ~(XST352_BYTE2_EOTF_MASK |
+			     XST352_BYTE3_COLORIMETRY_HD);
+		payload |= FIELD_PREP(XST352_BYTE2_EOTF_MASK, eotf) |
+			FIELD_PREP(XST352_BYTE3_COLORIMETRY_HD, colori);
+	} else {
+		payload &= ~(XST352_BYTE2_EOTF_MASK |
+			     XST352_BYTE3_COLORIMETRY);
+		payload |= FIELD_PREP(XST352_BYTE2_EOTF_MASK, eotf) |
+			FIELD_PREP(XST352_BYTE3_COLORIMETRY, colori);
+	}
+
+	dev_dbg(sdi->dev, "payload = 0x%x, eotf = %d\n", payload, eotf);
+	for (i = 0; i < sdi->sdi_data_strm_prop_val / 2; i++)
+		xlnx_sdi_writel(sdi->base,
+				(XSDI_TX_ST352_DATA_CH0 + (i * 4)), payload);
+	sdi->prev_eotf = eotf;
+}
+
+/**
  * xlnx_sdi_irq_handler - SDI Tx interrupt
  * @irq:	irq number
  * @data:	irq data
@@ -272,6 +392,8 @@ static irqreturn_t xlnx_sdi_irq_handler(int irq, void *data)
 
 	reg = xlnx_sdi_readl(sdi->base, XSDI_TX_ISR_STAT);
 
+	if (reg & XSDI_TX_VSYNC_INTR)
+		xlnx_sdi_set_eotf(sdi);
 	if (reg & XSDI_GTTX_RSTDONE_INTR)
 		dev_dbg(sdi->dev, "GT reset interrupt received\n");
 	if (reg & XSDI_TX_CE_ALIGN_ERR_INTR)
@@ -284,7 +406,8 @@ static irqreturn_t xlnx_sdi_irq_handler(int irq, void *data)
 			reg & ~(XSDI_AXI4S_VID_LOCK_INTR));
 
 	reg = xlnx_sdi_readl(sdi->base, XSDI_TX_STS_SB_TDATA);
-	if (reg & XSDI_TX_TDATA_GT_RESETDONE) {
+	if (reg & XSDI_TX_TDATA_GT_RESETDONE ||
+	    !sdi->gt_rst_gpio) {
 		sdi->event_received = true;
 		wake_up_interruptible(&sdi->wait_event);
 	}
@@ -396,7 +519,7 @@ static void xlnx_sdi_payload_config(struct xlnx_sdi *sdi, u32 mode)
  * @sdi:	pointer Xilinx SDI Tx structure
  * @mode:	SDI Tx display mode
  * @is_frac:	0 - integer 1 - fractional
- * @mux_ptrn:	specifiy the data stream interleaving pattern to be used
+ * @mux_ptrn:	specify the data stream interleaving pattern to be used
  * This function config the SDI st352 payload parameter.
  */
 static void xlnx_sdi_set_mode(struct xlnx_sdi *sdi, u32 mode,
@@ -413,11 +536,21 @@ static void xlnx_sdi_set_mode(struct xlnx_sdi *sdi, u32 mode,
 	data &= ~XSDI_TX_CTRL_420_BIT;
 
 	data |= (((mode & XSDI_TX_CTRL_MODE) << XSDI_TX_CTRL_MODE_SHIFT) |
-		(is_frac  << XSDI_TX_CTRL_M_SHIFT) |
+		(is_frac << XSDI_TX_CTRL_M_SHIFT) |
 		((mux_ptrn & XSDI_TX_CTRL_MUX) << XSDI_TX_CTRL_MUX_SHIFT));
 
+	dev_dbg(sdi->dev, "sdi_420_out_val = %d\n sdi_444_out_val = %d\n\r",
+		sdi->sdi_420_out_val, sdi->sdi_444_out_val);
 	if (sdi->sdi_420_out_val)
 		data |= XSDI_TX_CTRL_420_BIT;
+	else if (sdi->sdi_444_out_val)
+		data |= XSDI_TX_CTRL_444_BIT;
+
+	if (sdi->is_hfr) {
+		data |= XSDI_TX_CTRL_HFR;
+		dev_dbg(sdi->dev, "HFR enabled\n\r");
+	}
+
 	xlnx_sdi_writel(sdi->base, XSDI_TX_MDL_CTRL, data);
 }
 
@@ -493,6 +626,8 @@ xlnx_sdi_atomic_set_property(struct drm_connector *connector,
 		sdi->sdi_420_in_val = val;
 	else if (property == sdi->sdi_420_out)
 		sdi->sdi_420_out_val = val;
+	else if (property == sdi->sdi_444_out)
+		sdi->sdi_444_out_val = val;
 	else if (property == sdi->is_frac_prop)
 		sdi->is_frac_prop_val = !!val;
 	else if (property == sdi->height_out)
@@ -507,6 +642,8 @@ xlnx_sdi_atomic_set_property(struct drm_connector *connector,
 		sdi->en_st352_c_val = !!val;
 	else if (property == sdi->use_ds2_3ga_prop)
 		sdi->use_ds2_3ga_val = !!val;
+	else if (property == sdi->c_encoding)
+		sdi->c_encoding_prop_val = val;
 	else
 		return -EINVAL;
 	return 0;
@@ -527,6 +664,8 @@ xlnx_sdi_atomic_get_property(struct drm_connector *connector,
 		*val = sdi->sdi_420_in_val;
 	else if (property == sdi->sdi_420_out)
 		*val = sdi->sdi_420_out_val;
+	else if (property == sdi->sdi_444_out)
+		*val = sdi->sdi_444_out_val;
 	else if (property == sdi->is_frac_prop)
 		*val =  sdi->is_frac_prop_val;
 	else if (property == sdi->height_out)
@@ -541,6 +680,8 @@ xlnx_sdi_atomic_get_property(struct drm_connector *connector,
 		*val =  sdi->en_st352_c_val;
 	else if (property == sdi->use_ds2_3ga_prop)
 		*val =  sdi->use_ds2_3ga_val;
+	else if (property == sdi->c_encoding)
+		*val = sdi->c_encoding_prop_val;
 	else
 		return -EINVAL;
 
@@ -559,7 +700,10 @@ static int xlnx_sdi_get_mode_id(struct drm_display_mode *mode)
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(xlnx_sdi_modes); i++)
-		if (drm_mode_equal(&xlnx_sdi_modes[i].mode, mode))
+		if (xlnx_sdi_modes[i].mode.htotal == mode->htotal &&
+		    xlnx_sdi_modes[i].mode.vtotal == mode->vtotal &&
+		    xlnx_sdi_modes[i].mode.clock == mode->clock &&
+		    xlnx_sdi_modes[i].mode.flags == mode->flags)
 			return i;
 	return -EINVAL;
 }
@@ -626,9 +770,19 @@ static int xlnx_sdi_get_modes(struct drm_connector *connector)
 	return xlnx_sdi_drm_add_modes(connector);
 }
 
+static int xlnx_sdi_mode_valid(struct drm_connector *connector,
+			       struct drm_display_mode *mode)
+{
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		mode->vdisplay /= 2;
+
+	return MODE_OK;
+}
+
 static struct drm_connector_helper_funcs xlnx_sdi_connector_helper_funcs = {
 	.get_modes = xlnx_sdi_get_modes,
 	.best_encoder = xlnx_sdi_best_encoder,
+	.mode_valid = xlnx_sdi_mode_valid,
 };
 
 /**
@@ -652,6 +806,7 @@ xlnx_sdi_drm_connector_create_property(struct drm_connector *base_connector)
 						       "sdi_data_stream", 2, 8);
 	sdi->sdi_420_in = drm_property_create_bool(dev, 0, "sdi_420_in");
 	sdi->sdi_420_out = drm_property_create_bool(dev, 0, "sdi_420_out");
+	sdi->sdi_444_out = drm_property_create_bool(dev, 0, "sdi_444_out");
 	sdi->height_out = drm_property_create_range(dev, 0,
 						    "height_out", 2, 4096);
 	sdi->width_out = drm_property_create_range(dev, 0,
@@ -666,6 +821,7 @@ xlnx_sdi_drm_connector_create_property(struct drm_connector *base_connector)
 		sdi->use_ds2_3ga_prop = drm_property_create_bool(dev, 0,
 								 "use_ds2_3ga");
 	}
+	sdi->c_encoding = drm_property_create_bool(dev, 0, "c_encoding");
 }
 
 /**
@@ -692,6 +848,9 @@ xlnx_sdi_drm_connector_attach_property(struct drm_connector *base_connector)
 	if (sdi->sdi_420_out)
 		drm_object_attach_property(obj, sdi->sdi_420_out, 0);
 
+	if (sdi->sdi_444_out)
+		drm_object_attach_property(obj, sdi->sdi_444_out, 0);
+
 	if (sdi->is_frac_prop)
 		drm_object_attach_property(obj, sdi->is_frac_prop, 0);
 
@@ -712,6 +871,12 @@ xlnx_sdi_drm_connector_attach_property(struct drm_connector *base_connector)
 
 	if (sdi->use_ds2_3ga_prop)
 		drm_object_attach_property(obj, sdi->use_ds2_3ga_prop, 0);
+
+	if (sdi->c_encoding)
+		drm_object_attach_property(obj, sdi->c_encoding, 0);
+
+	drm_object_attach_property(obj,
+				   base_connector->dev->mode_config.gen_hdr_output_metadata_property, 0);
 }
 
 static int xlnx_sdi_create_connector(struct drm_encoder *encoder)
@@ -736,6 +901,12 @@ static int xlnx_sdi_create_connector(struct drm_encoder *encoder)
 	drm_connector_attach_encoder(connector, encoder);
 	xlnx_sdi_drm_connector_create_property(connector);
 	xlnx_sdi_drm_connector_attach_property(connector);
+
+	/* Fill out the supported EOTFs */
+	connector->hdr_sink_metadata.hdmi_type1.eotf |=
+		BIT(V4L2_EOTF_BT_2100_HLG) |
+		BIT(V4L2_EOTF_TRADITIONAL_GAMMA_SDR) |
+		BIT(V4L2_EOTF_SMPTE_ST2084);
 
 	return 0;
 }
@@ -783,6 +954,8 @@ static u32 xlnx_sdi_calc_st352_payld(struct xlnx_sdi *sdi,
 		byt3 |= XST352_2048_SHIFT;
 	if (sdi->sdi_420_in_val)
 		byt3 |= XST352_YUV420_MASK;
+	else if (sdi->sdi_444_out_val)
+		byt3 |= XST352_YUV444_MASK;
 
 	/* byte 2 calculation */
 	is_p = !(mode->flags & DRM_MODE_FLAG_INTERLACE);
@@ -851,6 +1024,36 @@ static void xlnx_sdi_encoder_atomic_mode_set(struct drm_encoder *encoder,
 	struct videomode vm;
 	u32 payload, i;
 	u32 sditx_blank, vtc_blank;
+	unsigned long clkrate;
+	int ret;
+
+	/*
+	 * For the transceiver TX, for integer and fractional frame rate, the
+	 * PLL ref clock must be a different frequency. Other than SD mode
+	 * its 148.5MHz for an integer & 148.5/1.001 for fractional framerate.
+	 * Program clocks followed by reset, if picxo is not enabled.
+	 */
+	if (!sdi->picxo_enabled) {
+		if (sdi->is_frac_prop_val &&
+		    sdi->sdi_mod_prop_val != XSDI_MODE_SD)
+			clkrate = (CLK_RATE * 1000) / 1001;
+		else
+			clkrate = CLK_RATE;
+		ret = clk_set_rate(sdi->sditx_clk, clkrate);
+		if (ret)
+			dev_err(sdi->dev, "failed to set clk rate = %lu\n",
+				clkrate);
+		clkrate = clk_get_rate(sdi->sditx_clk);
+		dev_info(sdi->dev, "clkrate = %lu is_frac = %d\n", clkrate,
+			 sdi->is_frac_prop_val);
+		/*
+		 * Delay required to get QPLL1 lock as per the si5328
+		 * datasheet
+		 */
+		mdelay(50);
+		if (sdi->gt_rst_gpio)
+			xlnx_sdi_gt_reset(sdi);
+	}
 
 	/* Set timing parameters as per bridge output parameters */
 	xlnx_bridge_set_input(sdi->bridge, adjusted_mode->hdisplay,
@@ -865,8 +1068,9 @@ static void xlnx_sdi_encoder_atomic_mode_set(struct drm_encoder *encoder,
 			    sdi->width_out_prop_val &&
 			    xlnx_sdi_modes[i].mode.vdisplay ==
 			    sdi->height_out_prop_val &&
-			    xlnx_sdi_modes[i].mode.vrefresh ==
-			    adjusted_mode->vrefresh) {
+			    adjusted_mode->flags == xlnx_sdi_modes[i].mode.flags &&
+			    drm_mode_vrefresh(&xlnx_sdi_modes[i].mode) ==
+			    drm_mode_vrefresh(adjusted_mode)) {
 				memcpy((char *)adjusted_mode +
 				       offsetof(struct drm_display_mode,
 						clock),
@@ -876,6 +1080,10 @@ static void xlnx_sdi_encoder_atomic_mode_set(struct drm_encoder *encoder,
 			}
 		}
 	}
+
+	/* If HFR video is streaming */
+	if (drm_mode_vrefresh(adjusted_mode) >= XSDI_HFR_MIN_FPS)
+		sdi->is_hfr = 1;
 
 	xlnx_sdi_setup(sdi);
 	xlnx_sdi_set_config_parameters(sdi);
@@ -900,12 +1108,22 @@ static void xlnx_sdi_encoder_atomic_mode_set(struct drm_encoder *encoder,
 		       adjusted_mode->hsync_start) / PIXELS_PER_CLK;
 
 	vm.vactive = adjusted_mode->vdisplay;
-	vm.vfront_porch = adjusted_mode->vsync_start -
-			  adjusted_mode->vdisplay;
-	vm.vback_porch = adjusted_mode->vtotal -
-			 adjusted_mode->vsync_end;
-	vm.vsync_len = adjusted_mode->vsync_end -
-		       adjusted_mode->vsync_start;
+	if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE) {
+		vm.vfront_porch = adjusted_mode->vsync_start / 2 -
+				  adjusted_mode->vdisplay;
+		vm.vback_porch = (adjusted_mode->vtotal -
+				  adjusted_mode->vsync_end) / 2;
+		vm.vsync_len = (adjusted_mode->vsync_end -
+				adjusted_mode->vsync_start) / 2;
+	} else {
+		vm.vfront_porch = adjusted_mode->vsync_start -
+				  adjusted_mode->vdisplay;
+		vm.vback_porch = adjusted_mode->vtotal -
+				 adjusted_mode->vsync_end;
+		vm.vsync_len = adjusted_mode->vsync_end -
+			       adjusted_mode->vsync_start;
+	}
+
 	vm.flags = 0;
 	if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
 		vm.flags |= DISPLAY_FLAGS_INTERLACED;
@@ -934,8 +1152,10 @@ static void xlnx_sdi_encoder_atomic_mode_set(struct drm_encoder *encoder,
 	/* parameters for sdi audio */
 	sdi->video_mode.vdisplay = adjusted_mode->vdisplay;
 	sdi->video_mode.hdisplay = adjusted_mode->hdisplay;
-	sdi->video_mode.vrefresh = adjusted_mode->vrefresh;
 	sdi->video_mode.flags = adjusted_mode->flags;
+	sdi->video_mode.htotal = adjusted_mode->htotal;
+	sdi->video_mode.vtotal = adjusted_mode->vtotal;
+	sdi->video_mode.clock = adjusted_mode->clock;
 
 	xlnx_stc_sig(sdi->base, &vm);
 }
@@ -1036,6 +1256,8 @@ static int xlnx_sdi_probe(struct platform_device *pdev)
 	int ret, irq;
 	struct device_node *ports, *port;
 	u32 nports = 0, portmask = 0;
+	unsigned long clkrate = 0;
+	enum gpiod_flags flags;
 
 	sdi = devm_kzalloc(dev, sizeof(*sdi), GFP_KERNEL);
 	if (!sdi)
@@ -1088,6 +1310,36 @@ static int xlnx_sdi_probe(struct platform_device *pdev)
 		dev_err(dev, "failed to enable vidin_clk %d\n", ret);
 		goto err_disable_sditx_clk;
 	}
+
+	sdi->qpll1_enabled = of_property_read_bool(sdi->dev->of_node,
+						   "xlnx,qpll1_enabled");
+
+	sdi->picxo_enabled = of_property_read_bool(sdi->dev->of_node,
+						   "xlnx,picxo_enabled");
+	dev_dbg(dev, "sdi-tx: value of qpll1_en = %d picxo_en = %d\n",
+		sdi->qpll1_enabled, sdi->picxo_enabled);
+
+	if (sdi->qpll1_enabled)
+		flags = GPIOD_OUT_LOW;
+	else
+		flags = GPIOD_OUT_HIGH;
+
+	sdi->gt_rst_gpio = devm_gpiod_get_optional(&pdev->dev, "phy-reset",
+						   flags);
+
+	if (IS_ERR(sdi->gt_rst_gpio)) {
+		ret = PTR_ERR(sdi->gt_rst_gpio);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Unable to get phy gpio\n");
+		goto err_disable_vidin_clk;
+	}
+
+	ret = clk_set_rate(sdi->sditx_clk, CLK_RATE);
+	if (ret)
+		dev_err(sdi->dev, "failed to set clk rate = %lu\n", CLK_RATE);
+
+	clkrate = clk_get_rate(sdi->sditx_clk);
+	dev_dbg(sdi->dev, "clkrate = %lu\n", clkrate);
 
 	/* in case all "port" nodes are grouped under a "ports" node */
 	ports = of_get_child_by_name(sdi->dev->of_node, "ports");
@@ -1143,10 +1395,17 @@ static int xlnx_sdi_probe(struct platform_device *pdev)
 
 	/* disable interrupt */
 	xlnx_sdi_writel(sdi->base, XSDI_TX_GLBL_IER, 0);
-	irq = platform_get_irq(pdev, 0);
+	irq = platform_get_irq_byname(pdev, "sdi_tx_irq");
 	if (irq < 0) {
-		ret = irq;
-		goto err_disable_vidin_clk;
+		/*
+		 * If there is no IRQ with this name, try to get the first
+		 * IRQ defined in the device tree.
+		 */
+		irq = platform_get_irq(pdev, 0);
+		if (irq < 0) {
+			ret = irq;
+			goto err_disable_vidin_clk;
+		}
 	}
 
 	ret = devm_request_threaded_irq(sdi->dev, irq, NULL,
@@ -1175,6 +1434,8 @@ static int xlnx_sdi_probe(struct platform_device *pdev)
 	 * probable error scenarios
 	 */
 	pdev->dev.platform_data = &sdi->video_mode;
+	/* Initialize to IP default value */
+	sdi->prev_eotf = XST352_BYTE2_EOTF_SDRTV;
 
 	ret = component_add(dev, &xlnx_sdi_component_ops);
 	if (ret < 0)

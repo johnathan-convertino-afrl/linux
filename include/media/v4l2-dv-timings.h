@@ -10,6 +10,17 @@
 
 #include <linux/videodev2.h>
 
+/**
+ * v4l2_calc_timeperframe - helper function to calculate timeperframe based
+ *	v4l2_dv_timings fields.
+ * @t: Timings for the video mode.
+ *
+ * Calculates the expected timeperframe using the pixel clock value and
+ * horizontal/vertical measures. This means that v4l2_dv_timings structure
+ * must be correctly and fully filled.
+ */
+struct v4l2_fract v4l2_calc_timeperframe(const struct v4l2_dv_timings *t);
+
 /*
  * v4l2_dv_timings_presets: list of all dv_timings presets.
  */
@@ -213,7 +224,7 @@ static inline  bool can_reduce_fps(struct v4l2_bt_timings *bt)
 }
 
 /**
- * struct v4l2_hdmi_rx_colorimetry - describes the HDMI colorimetry information
+ * struct v4l2_hdmi_colorimetry - describes the HDMI colorimetry information
  * @colorspace:		enum v4l2_colorspace, the colorspace
  * @ycbcr_enc:		enum v4l2_ycbcr_encoding, Y'CbCr encoding
  * @quantization:	enum v4l2_quantization, colorspace quantization

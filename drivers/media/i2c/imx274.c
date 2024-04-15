@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * imx274.c - IMX274 CMOS Image Sensor driver
  *
@@ -6,36 +7,25 @@
  * Leon Luo <leonl@leopardimaging.com>
  * Edwin Zou <edwinz@leopardimaging.com>
  * Luca Ceresoli <luca@lucaceresoli.net>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk.h>
 #include <linux/delay.h>
-#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of_gpio.h>
+#include <linux/pm_runtime.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
 
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
+#include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
 
 /*
@@ -76,7 +66,6 @@
  */
 #define IMX274_MIN_EXPOSURE_TIME		(4 * 260 / 72)
 
-#define IMX274_DEFAULT_MODE			IMX274_BINNING_OFF
 #define IMX274_MAX_WIDTH			(3840)
 #define IMX274_MAX_HEIGHT			(2160)
 #define IMX274_MAX_FRAME_RATE			(120)
@@ -142,6 +131,15 @@
 #define IMX274_TABLE_WAIT_MS			0
 #define IMX274_TABLE_END			1
 
+/* regulator supplies */
+static const char * const imx274_supply_names[] = {
+	"vddl",  /* IF (1.2V) supply */
+	"vdig",  /* Digital Core (1.8V) supply */
+	"vana",  /* Analog (2.8V) supply */
+};
+
+#define IMX274_NUM_SUPPLIES ARRAY_SIZE(imx274_supply_names)
+
 /*
  * imx274 I2C operation related structure
  */
@@ -156,12 +154,6 @@ static const struct regmap_config imx274_regmap_config = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-enum imx274_binning {
-	IMX274_BINNING_OFF,
-	IMX274_BINNING_2_1,
-	IMX274_BINNING_3_1,
-};
-
 /*
  * Parameters for each imx274 readout mode.
  *
@@ -169,7 +161,8 @@ enum imx274_binning {
  * implemented modes.
  *
  * @init_regs: registers to initialize the mode
- * @bin_ratio: downscale factor (e.g. 3 for 3:1 binning)
+ * @wbin_ratio: width downscale factor (e.g. 3 for 1280; 3 = 3840/1280)
+ * @hbin_ratio: height downscale factor (e.g. 3 for 720; 3 = 2160/720)
  * @min_frame_len: Minimum frame length for each mode (see "Frame Rate
  *                 Adjustment (CSI-2)" in the datasheet)
  * @min_SHR: Minimum SHR register value (see "Shutter Setting (CSI-2)" in the
@@ -178,9 +171,10 @@ enum imx274_binning {
  * @nocpiop: Number of clocks per internal offset period (see "Integration Time
  *           in Each Readout Drive Mode (CSI-2)" in the datasheet)
  */
-struct imx274_frmfmt {
+struct imx274_mode {
 	const struct reg_8 *init_regs;
-	unsigned int bin_ratio;
+	u8 wbin_ratio;
+	u8 hbin_ratio;
 	int min_frame_len;
 	int min_SHR;
 	int max_fps;
@@ -218,8 +212,8 @@ static const char * const tp_qmenu[] = {
 	"Vertical Stripe (555h / 000h)",
 	"Vertical Stripe (000h / FFFh)",
 	"Vertical Stripe (FFFh / 000h)",
-	"Horizontal Color Bars",
 	"Vertical Color Bars",
+	"Horizontal Color Bars",
 };
 
 /*
@@ -344,25 +338,59 @@ static const struct reg_8 imx274_mode5_1280x720_raw10[] = {
 };
 
 /*
+ * Vertical 2/8 subsampling horizontal 3 binning
+ * imx274 mode6(refer to datasheet) register configuration with
+ * 1280x540 resolution, raw10 data and mipi four lane output
+ */
+static const struct reg_8 imx274_mode6_1280x540_raw10[] = {
+	{0x3004, 0x04}, /* mode setting */
+	{0x3005, 0x31},
+	{0x3006, 0x00},
+	{0x3007, 0x02}, /* mode setting */
+
+	{0x3018, 0xA2}, /* output XVS, HVS */
+
+	{0x306B, 0x05},
+	{0x30E2, 0x04}, /* mode setting */
+
+	{0x30EE, 0x01},
+	{0x3342, 0x0A},
+	{0x3343, 0x00},
+	{0x3344, 0x16},
+	{0x3345, 0x00},
+	{0x33A6, 0x01},
+	{0x3528, 0x0E},
+	{0x3554, 0x1F},
+	{0x3555, 0x01},
+	{0x3556, 0x01},
+	{0x3557, 0x01},
+	{0x3558, 0x01},
+	{0x3559, 0x00},
+	{0x355A, 0x00},
+	{0x35BA, 0x0E},
+	{0x366A, 0x1B},
+	{0x366B, 0x1A},
+	{0x366C, 0x19},
+	{0x366D, 0x17},
+	{0x3A41, 0x04},
+
+	{IMX274_TABLE_END, 0x00}
+};
+
+/*
  * imx274 first step register configuration for
  * starting stream
  */
 static const struct reg_8 imx274_start_1[] = {
 	{IMX274_STANDBY_REG, 0x12},
-	{IMX274_TABLE_END, 0x00}
-};
 
-/*
- * imx274 second step register configuration for
- * starting stream
- */
-static const struct reg_8 imx274_start_2[] = {
-	{0x3120, 0xF0}, /* clock settings */
-	{0x3121, 0x00}, /* clock settings */
-	{0x3122, 0x02}, /* clock settings */
-	{0x3129, 0x9C}, /* clock settings */
-	{0x312A, 0x02}, /* clock settings */
-	{0x312D, 0x02}, /* clock settings */
+	/* PLRD: clock settings */
+	{0x3120, 0xF0},
+	{0x3121, 0x00},
+	{0x3122, 0x02},
+	{0x3129, 0x9C},
+	{0x312A, 0x02},
+	{0x312D, 0x02},
 
 	{0x310B, 0x00},
 
@@ -407,27 +435,27 @@ static const struct reg_8 imx274_start_2[] = {
 };
 
 /*
- * imx274 third step register configuration for
+ * imx274 second step register configuration for
  * starting stream
  */
-static const struct reg_8 imx274_start_3[] = {
+static const struct reg_8 imx274_start_2[] = {
 	{IMX274_STANDBY_REG, 0x00},
 	{0x303E, 0x02}, /* SYS_MODE = 2 */
 	{IMX274_TABLE_END, 0x00}
 };
 
 /*
- * imx274 forth step register configuration for
+ * imx274 third step register configuration for
  * starting stream
  */
-static const struct reg_8 imx274_start_4[] = {
+static const struct reg_8 imx274_start_3[] = {
 	{0x30F4, 0x00},
-	{0x3018, 0xA2}, /* XHS VHS OUTUPT */
+	{0x3018, 0xA2}, /* XHS VHS OUTPUT */
 	{IMX274_TABLE_END, 0x00}
 };
 
 /*
- * imx274 register configuration for stoping stream
+ * imx274 register configuration for stopping stream
  */
 static const struct reg_8 imx274_stop[] = {
 	{IMX274_STANDBY_REG, 0x01},
@@ -459,10 +487,11 @@ static const struct reg_8 imx274_tp_regs[] = {
 };
 
 /* nocpiop happens to be the same number for the implemented modes */
-static const struct imx274_frmfmt imx274_formats[] = {
+static const struct imx274_mode imx274_modes[] = {
 	{
 		/* mode 1, 4K */
-		.bin_ratio = 1,
+		.wbin_ratio = 1, /* 3840 */
+		.hbin_ratio = 1, /* 2160 */
 		.init_regs = imx274_mode1_3840x2160_raw10,
 		.min_frame_len = 4550,
 		.min_SHR = 12,
@@ -471,7 +500,8 @@ static const struct imx274_frmfmt imx274_formats[] = {
 	},
 	{
 		/* mode 3, 1080p */
-		.bin_ratio = 2,
+		.wbin_ratio = 2, /* 1920 */
+		.hbin_ratio = 2, /* 1080 */
 		.init_regs = imx274_mode3_1920x1080_raw10,
 		.min_frame_len = 2310,
 		.min_SHR = 8,
@@ -480,10 +510,21 @@ static const struct imx274_frmfmt imx274_formats[] = {
 	},
 	{
 		/* mode 5, 720p */
-		.bin_ratio = 3,
+		.wbin_ratio = 3, /* 1280 */
+		.hbin_ratio = 3, /* 720 */
 		.init_regs = imx274_mode5_1280x720_raw10,
 		.min_frame_len = 2310,
 		.min_SHR = 8,
+		.max_fps = 120,
+		.nocpiop = 112,
+	},
+	{
+		/* mode 6, 540p */
+		.wbin_ratio = 3, /* 1280 */
+		.hbin_ratio = 4, /* 540 */
+		.init_regs = imx274_mode6_1280x540_raw10,
+		.min_frame_len = 2310,
+		.min_SHR = 4,
 		.max_fps = 120,
 		.nocpiop = 112,
 	},
@@ -518,6 +559,8 @@ struct imx274_ctrls {
  * @frame_rate: V4L2 frame rate structure
  * @regmap: Pointer to regmap structure
  * @reset_gpio: Pointer to reset gpio
+ * @supplies: List of analog and digital supply regulators
+ * @inck: Pointer to sensor input clock
  * @lock: Mutex structure
  * @mode: Parameters for the selected readout mode
  */
@@ -531,8 +574,10 @@ struct stimx274 {
 	struct v4l2_fract frame_interval;
 	struct regmap *regmap;
 	struct gpio_desc *reset_gpio;
+	struct regulator_bulk_data supplies[IMX274_NUM_SUPPLIES];
+	struct clk *inck;
 	struct mutex lock; /* mutex lock for operations */
-	const struct imx274_frmfmt *mode;
+	const struct imx274_mode *mode;
 };
 
 #define IMX274_ROUND(dim, step, flags)			\
@@ -634,26 +679,6 @@ static int imx274_write_table(struct stimx274 *priv, const struct reg_8 table[])
 	return 0;
 }
 
-static inline int imx274_read_reg(struct stimx274 *priv, u16 addr, u8 *val)
-{
-	int err;
-	unsigned int temp;
-
-	err = regmap_read(priv->regmap, addr, &temp);
-	if (err) {
-		dev_err(&priv->client->dev,
-			"%s : i2c read failed, addr = %x\n", __func__, addr);
-	} else {
-		*val = temp;
-
-		dev_dbg(&priv->client->dev,
-			"%s : addr 0x%x, val=0x%x\n", __func__,
-			addr, *val);
-	}
-
-	return err;
-}
-
 static inline int imx274_write_reg(struct stimx274 *priv, u16 addr, u8 val)
 {
 	int err;
@@ -671,7 +696,42 @@ static inline int imx274_write_reg(struct stimx274 *priv, u16 addr, u8 val)
 }
 
 /**
- * Write a multibyte register.
+ * imx274_read_mbreg - Read a multibyte register.
+ *
+ * Uses a bulk read where possible.
+ *
+ * @priv: Pointer to device structure
+ * @addr: Address of the LSB register.  Other registers must be
+ *        consecutive, least-to-most significant.
+ * @val: Pointer to store the register value (cpu endianness)
+ * @nbytes: Number of bytes to read (range: [1..3]).
+ *          Other bytes are zet to 0.
+ *
+ * Return: 0 on success, errors otherwise
+ */
+static int imx274_read_mbreg(struct stimx274 *priv, u16 addr, u32 *val,
+			     size_t nbytes)
+{
+	__le32 val_le = 0;
+	int err;
+
+	err = regmap_bulk_read(priv->regmap, addr, &val_le, nbytes);
+	if (err) {
+		dev_err(&priv->client->dev,
+			"%s : i2c bulk read failed, %x (%zu bytes)\n",
+			__func__, addr, nbytes);
+	} else {
+		*val = le32_to_cpu(val_le);
+		dev_dbg(&priv->client->dev,
+			"%s : addr 0x%x, val=0x%x (%zu bytes)\n",
+			__func__, addr, *val, nbytes);
+	}
+
+	return err;
+}
+
+/**
+ * imx274_write_mbreg - Write a multibyte register.
  *
  * Uses a bulk write where possible.
  *
@@ -679,7 +739,7 @@ static inline int imx274_write_reg(struct stimx274 *priv, u16 addr, u8 val)
  * @addr: Address of the LSB register.  Other registers must be
  *        consecutive, least-to-most significant.
  * @val: Value to be written to the register (cpu endianness)
- * @nbytes: Number of bits to write (range: [1..3])
+ * @nbytes: Number of bytes to write (range: [1..3])
  */
 static int imx274_write_mbreg(struct stimx274 *priv, u16 addr, u32 val,
 			      size_t nbytes)
@@ -713,10 +773,6 @@ static int imx274_mode_regs(struct stimx274 *priv)
 	if (err)
 		return err;
 
-	err = imx274_write_table(priv, imx274_start_2);
-	if (err)
-		return err;
-
 	err = imx274_write_table(priv, priv->mode->init_regs);
 
 	return err;
@@ -732,13 +788,19 @@ static int imx274_start_stream(struct stimx274 *priv)
 {
 	int err = 0;
 
+	err = __v4l2_ctrl_handler_setup(&priv->ctrls.handler);
+	if (err) {
+		dev_err(&priv->client->dev, "Error %d setup controls\n", err);
+		return err;
+	}
+
 	/*
 	 * Refer to "Standby Cancel Sequence when using CSI-2" in
 	 * imx274 datasheet, it should wait 10ms or more here.
 	 * give it 1 extra ms for margin
 	 */
 	msleep_range(11);
-	err = imx274_write_table(priv, imx274_start_3);
+	err = imx274_write_table(priv, imx274_start_2);
 	if (err)
 		return err;
 
@@ -748,7 +810,7 @@ static int imx274_start_stream(struct stimx274 *priv)
 	 * give it 1 extra ms for margin
 	 */
 	msleep_range(8);
-	err = imx274_write_table(priv, imx274_start_4);
+	err = imx274_write_table(priv, imx274_start_3);
 	if (err)
 		return err;
 
@@ -773,6 +835,66 @@ static void imx274_reset(struct stimx274 *priv, int rst)
 	usleep_range(IMX274_RESET_DELAY1, IMX274_RESET_DELAY2);
 }
 
+static int imx274_power_on(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct stimx274 *imx274 = to_imx274(sd);
+	int ret;
+
+	/* keep sensor in reset before power on */
+	imx274_reset(imx274, 0);
+
+	ret = clk_prepare_enable(imx274->inck);
+	if (ret) {
+		dev_err(&imx274->client->dev,
+			"Failed to enable input clock: %d\n", ret);
+		return ret;
+	}
+
+	ret = regulator_bulk_enable(IMX274_NUM_SUPPLIES, imx274->supplies);
+	if (ret) {
+		dev_err(&imx274->client->dev,
+			"Failed to enable regulators: %d\n", ret);
+		goto fail_reg;
+	}
+
+	udelay(2);
+	imx274_reset(imx274, 1);
+
+	return 0;
+
+fail_reg:
+	clk_disable_unprepare(imx274->inck);
+	return ret;
+}
+
+static int imx274_power_off(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct stimx274 *imx274 = to_imx274(sd);
+
+	imx274_reset(imx274, 0);
+
+	regulator_bulk_disable(IMX274_NUM_SUPPLIES, imx274->supplies);
+
+	clk_disable_unprepare(imx274->inck);
+
+	return 0;
+}
+
+static int imx274_regulators_get(struct device *dev, struct stimx274 *imx274)
+{
+	unsigned int i;
+
+	for (i = 0; i < IMX274_NUM_SUPPLIES; i++)
+		imx274->supplies[i].supply = imx274_supply_names[i];
+
+	return devm_regulator_bulk_get(dev, IMX274_NUM_SUPPLIES,
+					imx274->supplies);
+}
+
 /**
  * imx274_s_ctrl - This is used to set the imx274 V4L2 controls
  * @ctrl: V4L2 control to be set
@@ -786,6 +908,9 @@ static int imx274_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
 	struct stimx274 *imx274 = to_imx274(sd);
 	int ret = -EINVAL;
+
+	if (!pm_runtime_get_if_in_use(&imx274->client->dev))
+		return 0;
 
 	dev_dbg(&imx274->client->dev,
 		"%s : s_ctrl: %s, value: %d\n", __func__,
@@ -816,6 +941,8 @@ static int imx274_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = imx274_set_test_pattern(imx274, ctrl->val);
 		break;
 	}
+
+	pm_runtime_put(&imx274->client->dev);
 
 	return ret;
 }
@@ -852,7 +979,8 @@ static int imx274_binning_goodness(struct stimx274 *imx274,
 }
 
 /**
- * Helper function to change binning and set both compose and format.
+ * __imx274_change_compose - Helper function to change binning and set both
+ *	compose and format.
  *
  * We have two entry points to change binning: set_fmt and
  * set_selection(COMPOSE). Both have to compute the new output size
@@ -867,7 +995,7 @@ static int imx274_binning_goodness(struct stimx274 *imx274,
  * Must be called with imx274->lock locked.
  *
  * @imx274: The device object
- * @cfg:    The pad config we are editing for TRY requests
+ * @sd_state: The subdev state we are editing for TRY requests
  * @which:  V4L2_SUBDEV_FORMAT_ACTIVE or V4L2_SUBDEV_FORMAT_TRY from the caller
  * @width:  Input-output parameter: set to the desired width before
  *          the call, contains the chosen value after returning successfully
@@ -876,7 +1004,7 @@ static int imx274_binning_goodness(struct stimx274 *imx274,
  *          available (when called from set_fmt)
  */
 static int __imx274_change_compose(struct stimx274 *imx274,
-				   struct v4l2_subdev_pad_config *cfg,
+				   struct v4l2_subdev_state *sd_state,
 				   u32 which,
 				   u32 *width,
 				   u32 *height,
@@ -886,40 +1014,41 @@ static int __imx274_change_compose(struct stimx274 *imx274,
 	const struct v4l2_rect *cur_crop;
 	struct v4l2_mbus_framefmt *tgt_fmt;
 	unsigned int i;
-	const struct imx274_frmfmt *best_mode = &imx274_formats[0];
+	const struct imx274_mode *best_mode = &imx274_modes[0];
 	int best_goodness = INT_MIN;
 
 	if (which == V4L2_SUBDEV_FORMAT_TRY) {
-		cur_crop = &cfg->try_crop;
-		tgt_fmt = &cfg->try_fmt;
+		cur_crop = &sd_state->pads->try_crop;
+		tgt_fmt = &sd_state->pads->try_fmt;
 	} else {
 		cur_crop = &imx274->crop;
 		tgt_fmt = &imx274->format;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(imx274_formats); i++) {
-		unsigned int ratio = imx274_formats[i].bin_ratio;
+	for (i = 0; i < ARRAY_SIZE(imx274_modes); i++) {
+		u8 wratio = imx274_modes[i].wbin_ratio;
+		u8 hratio = imx274_modes[i].hbin_ratio;
 
 		int goodness = imx274_binning_goodness(
 			imx274,
-			cur_crop->width / ratio, *width,
-			cur_crop->height / ratio, *height,
+			cur_crop->width / wratio, *width,
+			cur_crop->height / hratio, *height,
 			flags);
 
 		if (goodness >= best_goodness) {
 			best_goodness = goodness;
-			best_mode = &imx274_formats[i];
+			best_mode = &imx274_modes[i];
 		}
 	}
 
-	*width = cur_crop->width / best_mode->bin_ratio;
-	*height = cur_crop->height / best_mode->bin_ratio;
+	*width = cur_crop->width / best_mode->wbin_ratio;
+	*height = cur_crop->height / best_mode->hbin_ratio;
 
 	if (which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		imx274->mode = best_mode;
 
-	dev_dbg(dev, "%s: selected %u:1 binning\n",
-		__func__, best_mode->bin_ratio);
+	dev_dbg(dev, "%s: selected %ux%u binning\n",
+		__func__, best_mode->wbin_ratio, best_mode->hbin_ratio);
 
 	tgt_fmt->width = *width;
 	tgt_fmt->height = *height;
@@ -931,7 +1060,7 @@ static int __imx274_change_compose(struct stimx274 *imx274,
 /**
  * imx274_get_fmt - Get the pad format
  * @sd: Pointer to V4L2 Sub device structure
- * @cfg: Pointer to sub device pad information structure
+ * @sd_state: Pointer to sub device state structure
  * @fmt: Pointer to pad level media bus format
  *
  * This function is used to get the pad format information.
@@ -939,7 +1068,7 @@ static int __imx274_change_compose(struct stimx274 *imx274,
  * Return: 0 on success
  */
 static int imx274_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct stimx274 *imx274 = to_imx274(sd);
@@ -953,7 +1082,7 @@ static int imx274_get_fmt(struct v4l2_subdev *sd,
 /**
  * imx274_set_fmt - This is used to set the pad format
  * @sd: Pointer to V4L2 Sub device structure
- * @cfg: Pointer to sub device pad information structure
+ * @sd_state: Pointer to sub device state information structure
  * @format: Pointer to pad level media bus format
  *
  * This function is used to set the pad format.
@@ -961,7 +1090,7 @@ static int imx274_get_fmt(struct v4l2_subdev *sd,
  * Return: 0 on success
  */
 static int imx274_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *fmt = &format->format;
@@ -970,7 +1099,7 @@ static int imx274_set_fmt(struct v4l2_subdev *sd,
 
 	mutex_lock(&imx274->lock);
 
-	err = __imx274_change_compose(imx274, cfg, format->which,
+	err = __imx274_change_compose(imx274, sd_state, format->which,
 				      &fmt->width, &fmt->height, 0);
 
 	if (err)
@@ -983,7 +1112,7 @@ static int imx274_set_fmt(struct v4l2_subdev *sd,
 	 */
 	fmt->field = V4L2_FIELD_NONE;
 	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
-		cfg->try_fmt = *fmt;
+		sd_state->pads->try_fmt = *fmt;
 	else
 		imx274->format = *fmt;
 
@@ -994,7 +1123,7 @@ out:
 }
 
 static int imx274_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_pad_config *cfg,
+				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
 	struct stimx274 *imx274 = to_imx274(sd);
@@ -1014,8 +1143,8 @@ static int imx274_get_selection(struct v4l2_subdev *sd,
 	}
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_TRY) {
-		src_crop = &cfg->try_crop;
-		src_fmt = &cfg->try_fmt;
+		src_crop = &sd_state->pads->try_crop;
+		src_fmt = &sd_state->pads->try_fmt;
 	} else {
 		src_crop = &imx274->crop;
 		src_fmt = &imx274->format;
@@ -1049,7 +1178,7 @@ static int imx274_get_selection(struct v4l2_subdev *sd,
 }
 
 static int imx274_set_selection_crop(struct stimx274 *imx274,
-				     struct v4l2_subdev_pad_config *cfg,
+				     struct v4l2_subdev_state *sd_state,
 				     struct v4l2_subdev_selection *sel)
 {
 	struct v4l2_rect *tgt_crop;
@@ -1086,7 +1215,7 @@ static int imx274_set_selection_crop(struct stimx274 *imx274,
 	sel->r = new_crop;
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
-		tgt_crop = &cfg->try_crop;
+		tgt_crop = &sd_state->pads->try_crop;
 	else
 		tgt_crop = &imx274->crop;
 
@@ -1100,7 +1229,7 @@ static int imx274_set_selection_crop(struct stimx274 *imx274,
 
 	/* if crop size changed then reset the output image size */
 	if (size_changed)
-		__imx274_change_compose(imx274, cfg, sel->which,
+		__imx274_change_compose(imx274, sd_state, sel->which,
 					&new_crop.width, &new_crop.height,
 					sel->flags);
 
@@ -1110,7 +1239,7 @@ static int imx274_set_selection_crop(struct stimx274 *imx274,
 }
 
 static int imx274_set_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_pad_config *cfg,
+				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
 	struct stimx274 *imx274 = to_imx274(sd);
@@ -1119,13 +1248,13 @@ static int imx274_set_selection(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	if (sel->target == V4L2_SEL_TGT_CROP)
-		return imx274_set_selection_crop(imx274, cfg, sel);
+		return imx274_set_selection_crop(imx274, sd_state, sel);
 
 	if (sel->target == V4L2_SEL_TGT_COMPOSE) {
 		int err;
 
 		mutex_lock(&imx274->lock);
-		err =  __imx274_change_compose(imx274, cfg, sel->which,
+		err =  __imx274_change_compose(imx274, sd_state, sel->which,
 					       &sel->r.width, &sel->r.height,
 					       sel->flags);
 		mutex_unlock(&imx274->lock);
@@ -1169,7 +1298,7 @@ static int imx274_apply_trimming(struct stimx274 *imx274)
 		(-imx274->crop.top / 2) : (imx274->crop.top / 2);
 	v_cut = (IMX274_MAX_HEIGHT - imx274->crop.height) / 2;
 	write_v_size = imx274->crop.height + 22;
-	y_out_size   = imx274->crop.height + 14;
+	y_out_size   = imx274->crop.height;
 
 	err = imx274_write_mbreg(imx274, IMX274_HMAX_REG_LSB, hmax, 2);
 	if (!err)
@@ -1237,10 +1366,16 @@ static int imx274_s_frame_interval(struct v4l2_subdev *sd,
 	int min, max, def;
 	int ret;
 
+	ret = pm_runtime_resume_and_get(&imx274->client->dev);
+	if (ret < 0)
+		return ret;
+
 	mutex_lock(&imx274->lock);
 	ret = imx274_set_frame_interval(imx274, fi->interval);
 
 	if (!ret) {
+		fi->interval = imx274->frame_interval;
+
 		/*
 		 * exposure time range is decided by frame interval
 		 * need to update it after frame interval changes
@@ -1249,7 +1384,8 @@ static int imx274_s_frame_interval(struct v4l2_subdev *sd,
 		max = fi->interval.numerator * 1000000
 			/ fi->interval.denominator;
 		def = max;
-		if (__v4l2_ctrl_modify_range(ctrl, min, max, 1, def)) {
+		ret = __v4l2_ctrl_modify_range(ctrl, min, max, 1, def);
+		if (ret) {
 			dev_err(&imx274->client->dev,
 				"Exposure ctrl range update failed\n");
 			goto unlock;
@@ -1265,6 +1401,7 @@ static int imx274_s_frame_interval(struct v4l2_subdev *sd,
 
 unlock:
 	mutex_unlock(&imx274->lock);
+	pm_runtime_put(&imx274->client->dev);
 
 	return ret;
 }
@@ -1275,10 +1412,8 @@ unlock:
  *
  * Return: 0 on success, errors otherwise
  */
-static int imx274_load_default(struct stimx274 *priv)
+static void imx274_load_default(struct stimx274 *priv)
 {
-	int ret;
-
 	/* load default control values */
 	priv->frame_interval.numerator = 1;
 	priv->frame_interval.denominator = IMX274_DEF_FRAME_RATE;
@@ -1286,29 +1421,6 @@ static int imx274_load_default(struct stimx274 *priv)
 	priv->ctrls.gain->val = IMX274_DEF_GAIN;
 	priv->ctrls.vflip->val = 0;
 	priv->ctrls.test_pattern->val = TEST_PATTERN_DISABLED;
-
-	/* update frame rate */
-	ret = imx274_set_frame_interval(priv,
-					priv->frame_interval);
-	if (ret)
-		return ret;
-
-	/* update exposure time */
-	ret = v4l2_ctrl_s_ctrl(priv->ctrls.exposure, priv->ctrls.exposure->val);
-	if (ret)
-		return ret;
-
-	/* update gain */
-	ret = v4l2_ctrl_s_ctrl(priv->ctrls.gain, priv->ctrls.gain->val);
-	if (ret)
-		return ret;
-
-	/* update vflip */
-	ret = v4l2_ctrl_s_ctrl(priv->ctrls.vflip, priv->ctrls.vflip->val);
-	if (ret)
-		return ret;
-
-	return 0;
 }
 
 /**
@@ -1328,11 +1440,17 @@ static int imx274_s_stream(struct v4l2_subdev *sd, int on)
 
 	dev_dbg(&imx274->client->dev, "%s : %s, mode index = %td\n", __func__,
 		on ? "Stream Start" : "Stream Stop",
-		imx274->mode - &imx274_formats[0]);
+		imx274->mode - &imx274_modes[0]);
 
 	mutex_lock(&imx274->lock);
 
 	if (on) {
+		ret = pm_runtime_resume_and_get(&imx274->client->dev);
+		if (ret < 0) {
+			mutex_unlock(&imx274->lock);
+			return ret;
+		}
+
 		/* load mode registers */
 		ret = imx274_mode_regs(imx274);
 		if (ret)
@@ -1343,19 +1461,13 @@ static int imx274_s_stream(struct v4l2_subdev *sd, int on)
 			goto fail;
 
 		/*
-		 * update frame rate & expsoure. if the last mode is different,
+		 * update frame rate & exposure. if the last mode is different,
 		 * HMAX could be changed. As the result, frame rate & exposure
 		 * are changed.
 		 * gain is not affected.
 		 */
 		ret = imx274_set_frame_interval(imx274,
 						imx274->frame_interval);
-		if (ret)
-			goto fail;
-
-		/* update exposure time */
-		ret = __v4l2_ctrl_s_ctrl(imx274->ctrls.exposure,
-					 imx274->ctrls.exposure->val);
 		if (ret)
 			goto fail;
 
@@ -1368,6 +1480,8 @@ static int imx274_s_stream(struct v4l2_subdev *sd, int on)
 		ret = imx274_write_table(imx274, imx274_stop);
 		if (ret)
 			goto fail;
+
+		pm_runtime_put(&imx274->client->dev);
 	}
 
 	mutex_unlock(&imx274->lock);
@@ -1375,6 +1489,7 @@ static int imx274_s_stream(struct v4l2_subdev *sd, int on)
 	return 0;
 
 fail:
+	pm_runtime_put(&imx274->client->dev);
 	mutex_unlock(&imx274->lock);
 	dev_err(&imx274->client->dev, "s_stream failed\n");
 	return ret;
@@ -1383,7 +1498,7 @@ fail:
 /*
  * imx274_get_frame_length - Function for obtaining current frame length
  * @priv: Pointer to device structure
- * @val: Pointer to obainted value
+ * @val: Pointer to obtained value
  *
  * frame_length = vmax x (svr + 1), in unit of hmax.
  *
@@ -1392,36 +1507,16 @@ fail:
 static int imx274_get_frame_length(struct stimx274 *priv, u32 *val)
 {
 	int err;
-	u16 svr;
+	u32 svr;
 	u32 vmax;
-	u8 reg_val[3];
 
-	/* svr */
-	err = imx274_read_reg(priv, IMX274_SVR_REG_LSB, &reg_val[0]);
+	err = imx274_read_mbreg(priv, IMX274_SVR_REG_LSB, &svr, 2);
 	if (err)
 		goto fail;
 
-	err = imx274_read_reg(priv, IMX274_SVR_REG_MSB, &reg_val[1]);
+	err = imx274_read_mbreg(priv, IMX274_VMAX_REG_3, &vmax, 3);
 	if (err)
 		goto fail;
-
-	svr = (reg_val[1] << IMX274_SHIFT_8_BITS) + reg_val[0];
-
-	/* vmax */
-	err = imx274_read_reg(priv, IMX274_VMAX_REG_3, &reg_val[0]);
-	if (err)
-		goto fail;
-
-	err = imx274_read_reg(priv, IMX274_VMAX_REG_2, &reg_val[1]);
-	if (err)
-		goto fail;
-
-	err = imx274_read_reg(priv, IMX274_VMAX_REG_1, &reg_val[2]);
-	if (err)
-		goto fail;
-
-	vmax = ((reg_val[2] & IMX274_MASK_LSB_3_BITS) << IMX274_SHIFT_16_BITS)
-		+ (reg_val[1] << IMX274_SHIFT_8_BITS) + reg_val[0];
 
 	*val = vmax * (svr + 1);
 
@@ -1603,8 +1698,7 @@ fail:
 static int imx274_set_exposure(struct stimx274 *priv, int val)
 {
 	int err;
-	u16 hmax;
-	u8 reg_val[2];
+	u32 hmax;
 	u32 coarse_time; /* exposure time in unit of line (HMAX)*/
 
 	dev_dbg(&priv->client->dev,
@@ -1612,14 +1706,10 @@ static int imx274_set_exposure(struct stimx274 *priv, int val)
 
 	/* step 1: convert input exposure_time (val) into number of 1[HMAX] */
 
-	/* obtain HMAX value */
-	err = imx274_read_reg(priv, IMX274_HMAX_REG_LSB, &reg_val[0]);
+	err = imx274_read_mbreg(priv, IMX274_HMAX_REG_LSB, &hmax, 2);
 	if (err)
 		goto fail;
-	err = imx274_read_reg(priv, IMX274_HMAX_REG_MSB, &reg_val[1]);
-	if (err)
-		goto fail;
-	hmax = (reg_val[1] << IMX274_SHIFT_8_BITS) + reg_val[0];
+
 	if (hmax == 0) {
 		err = -EINVAL;
 		goto fail;
@@ -1754,17 +1844,16 @@ static int imx274_set_frame_interval(struct stimx274 *priv,
 {
 	int err;
 	u32 frame_length, req_frame_rate;
-	u16 svr;
-	u16 hmax;
-	u8 reg_val[2];
+	u32 svr;
+	u32 hmax;
 
 	dev_dbg(&priv->client->dev, "%s: input frame interval = %d / %d",
 		__func__, frame_interval.numerator,
 		frame_interval.denominator);
 
-	if (frame_interval.numerator == 0) {
-		err = -EINVAL;
-		goto fail;
+	if (frame_interval.numerator == 0 || frame_interval.denominator == 0) {
+		frame_interval.denominator = IMX274_DEF_FRAME_RATE;
+		frame_interval.numerator = 1;
 	}
 
 	req_frame_rate = (u32)(frame_interval.denominator
@@ -1784,25 +1873,17 @@ static int imx274_set_frame_interval(struct stimx274 *priv,
 	 * frame_length (i.e. VMAX) = (frame_interval) x 72M /(SVR+1) / HMAX
 	 */
 
-	/* SVR */
-	err = imx274_read_reg(priv, IMX274_SVR_REG_LSB, &reg_val[0]);
+	err = imx274_read_mbreg(priv, IMX274_SVR_REG_LSB, &svr, 2);
 	if (err)
 		goto fail;
-	err = imx274_read_reg(priv, IMX274_SVR_REG_MSB, &reg_val[1]);
-	if (err)
-		goto fail;
-	svr = (reg_val[1] << IMX274_SHIFT_8_BITS) + reg_val[0];
+
 	dev_dbg(&priv->client->dev,
 		"%s : register SVR = %d\n", __func__, svr);
 
-	/* HMAX */
-	err = imx274_read_reg(priv, IMX274_HMAX_REG_LSB, &reg_val[0]);
+	err = imx274_read_mbreg(priv, IMX274_HMAX_REG_LSB, &hmax, 2);
 	if (err)
 		goto fail;
-	err = imx274_read_reg(priv, IMX274_HMAX_REG_MSB, &reg_val[1]);
-	if (err)
-		goto fail;
-	hmax = (reg_val[1] << IMX274_SHIFT_8_BITS) + reg_val[0];
+
 	dev_dbg(&priv->client->dev,
 		"%s : register HMAX = %d\n", __func__, hmax);
 
@@ -1827,7 +1908,21 @@ fail:
 	return err;
 }
 
+static int imx274_enum_mbus_code(struct v4l2_subdev *sd,
+				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_mbus_code_enum *code)
+{
+	if (code->index > 0)
+		return -EINVAL;
+
+	/* only supported format in the driver is Raw 10 bits SRGGB */
+	code->code = MEDIA_BUS_FMT_SRGGB10_1X10;
+
+	return 0;
+}
+
 static const struct v4l2_subdev_pad_ops imx274_pad_ops = {
+	.enum_mbus_code = imx274_enum_mbus_code,
 	.get_fmt = imx274_get_fmt,
 	.set_fmt = imx274_set_fmt,
 	.get_selection = imx274_get_selection,
@@ -1861,26 +1956,75 @@ static const struct i2c_device_id imx274_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, imx274_id);
 
-static int imx274_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int imx274_fwnode_parse(struct device *dev)
+{
+	struct fwnode_handle *endpoint;
+	/* Only CSI2 is supported */
+	struct v4l2_fwnode_endpoint ep = {
+		.bus_type = V4L2_MBUS_CSI2_DPHY
+	};
+	int ret;
+
+	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
+	if (!endpoint) {
+		dev_err(dev, "Endpoint node not found\n");
+		return -EINVAL;
+	}
+
+	ret = v4l2_fwnode_endpoint_parse(endpoint, &ep);
+	fwnode_handle_put(endpoint);
+	if (ret == -ENXIO) {
+		dev_err(dev, "Unsupported bus type, should be CSI2\n");
+		return ret;
+	} else if (ret) {
+		dev_err(dev, "Parsing endpoint node failed %d\n", ret);
+		return ret;
+	}
+
+	/* Check number of data lanes, only 4 lanes supported */
+	if (ep.bus.mipi_csi2.num_data_lanes != 4) {
+		dev_err(dev, "Invalid data lanes: %d\n",
+			ep.bus.mipi_csi2.num_data_lanes);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int imx274_probe(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd;
 	struct stimx274 *imx274;
+	struct device *dev = &client->dev;
 	int ret;
 
 	/* initialize imx274 */
-	imx274 = devm_kzalloc(&client->dev, sizeof(*imx274), GFP_KERNEL);
+	imx274 = devm_kzalloc(dev, sizeof(*imx274), GFP_KERNEL);
 	if (!imx274)
 		return -ENOMEM;
 
 	mutex_init(&imx274->lock);
 
+	ret = imx274_fwnode_parse(dev);
+	if (ret)
+		return ret;
+
+	imx274->inck = devm_clk_get_optional(dev, "inck");
+	if (IS_ERR(imx274->inck))
+		return PTR_ERR(imx274->inck);
+
+	ret = imx274_regulators_get(dev, imx274);
+	if (ret) {
+		dev_err(dev, "Failed to get power regulators, err: %d\n", ret);
+		return ret;
+	}
+
 	/* initialize format */
-	imx274->mode = &imx274_formats[IMX274_DEFAULT_MODE];
+	imx274->mode = &imx274_modes[0];
 	imx274->crop.width = IMX274_MAX_WIDTH;
 	imx274->crop.height = IMX274_MAX_HEIGHT;
-	imx274->format.width = imx274->crop.width / imx274->mode->bin_ratio;
-	imx274->format.height = imx274->crop.height / imx274->mode->bin_ratio;
+	imx274->format.width = imx274->crop.width / imx274->mode->wbin_ratio;
+	imx274->format.height = imx274->crop.height / imx274->mode->hbin_ratio;
 	imx274->format.field = V4L2_FIELD_NONE;
 	imx274->format.code = MEDIA_BUS_FMT_SRGGB10_1X10;
 	imx274->format.colorspace = V4L2_COLORSPACE_SRGB;
@@ -1890,7 +2034,7 @@ static int imx274_probe(struct i2c_client *client,
 	/* initialize regmap */
 	imx274->regmap = devm_regmap_init_i2c(client, &imx274_regmap_config);
 	if (IS_ERR(imx274->regmap)) {
-		dev_err(&client->dev,
+		dev_err(dev,
 			"regmap init failed: %ld\n", PTR_ERR(imx274->regmap));
 		ret = -ENODEV;
 		goto err_regmap;
@@ -1900,7 +2044,6 @@ static int imx274_probe(struct i2c_client *client,
 	imx274->client = client;
 	sd = &imx274->sd;
 	v4l2_i2c_subdev_init(sd, client, &imx274_subdev_ops);
-	strlcpy(sd->name, DRIVER_NAME, sizeof(sd->name));
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
 
 	/* initialize subdev media pad */
@@ -1908,30 +2051,33 @@ static int imx274_probe(struct i2c_client *client,
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	ret = media_entity_pads_init(&sd->entity, 1, &imx274->pad);
 	if (ret < 0) {
-		dev_err(&client->dev,
+		dev_err(dev,
 			"%s : media entity init Failed %d\n", __func__, ret);
 		goto err_regmap;
 	}
 
 	/* initialize sensor reset gpio */
-	imx274->reset_gpio = devm_gpiod_get_optional(&client->dev, "reset",
+	imx274->reset_gpio = devm_gpiod_get_optional(dev, "reset",
 						     GPIOD_OUT_HIGH);
 	if (IS_ERR(imx274->reset_gpio)) {
 		if (PTR_ERR(imx274->reset_gpio) != -EPROBE_DEFER)
-			dev_err(&client->dev, "Reset GPIO not setup in DT");
+			dev_err(dev, "Reset GPIO not setup in DT");
 		ret = PTR_ERR(imx274->reset_gpio);
 		goto err_me;
 	}
 
-	/* pull sensor out of reset */
-	imx274_reset(imx274, 1);
+	/* power on the sensor */
+	ret = imx274_power_on(dev);
+	if (ret < 0) {
+		dev_err(dev, "%s : imx274 power on failed\n", __func__);
+		goto err_me;
+	}
 
 	/* initialize controls */
-	ret = v4l2_ctrl_handler_init(&imx274->ctrls.handler, 2);
+	ret = v4l2_ctrl_handler_init(&imx274->ctrls.handler, 4);
 	if (ret < 0) {
-		dev_err(&client->dev,
-			"%s : ctrl handler init Failed\n", __func__);
-		goto err_me;
+		dev_err(dev, "%s : ctrl handler init Failed\n", __func__);
+		goto err_power_off;
 	}
 
 	imx274->ctrls.handler.lock = &imx274->lock;
@@ -1967,37 +2113,28 @@ static int imx274_probe(struct i2c_client *client,
 		goto err_ctrls;
 	}
 
-	/* setup default controls */
-	ret = v4l2_ctrl_handler_setup(&imx274->ctrls.handler);
-	if (ret) {
-		dev_err(&client->dev,
-			"Error %d setup default controls\n", ret);
-		goto err_ctrls;
-	}
-
 	/* load default control values */
-	ret = imx274_load_default(imx274);
-	if (ret) {
-		dev_err(&client->dev,
-			"%s : imx274_load_default failed %d\n",
-			__func__, ret);
-		goto err_ctrls;
-	}
+	imx274_load_default(imx274);
 
 	/* register subdevice */
 	ret = v4l2_async_register_subdev(sd);
 	if (ret < 0) {
-		dev_err(&client->dev,
-			"%s : v4l2_async_register_subdev failed %d\n",
+		dev_err(dev, "%s : v4l2_async_register_subdev failed %d\n",
 			__func__, ret);
 		goto err_ctrls;
 	}
 
-	dev_info(&client->dev, "imx274 : imx274 probe success !\n");
+	pm_runtime_set_active(dev);
+	pm_runtime_enable(dev);
+	pm_runtime_idle(dev);
+
+	dev_info(dev, "imx274 : imx274 probe success !\n");
 	return 0;
 
 err_ctrls:
 	v4l2_ctrl_handler_free(&imx274->ctrls.handler);
+err_power_off:
+	imx274_power_off(dev);
 err_me:
 	media_entity_cleanup(&sd->entity);
 err_regmap:
@@ -2005,27 +2142,34 @@ err_regmap:
 	return ret;
 }
 
-static int imx274_remove(struct i2c_client *client)
+static void imx274_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct stimx274 *imx274 = to_imx274(sd);
 
-	/* stop stream */
-	imx274_write_table(imx274, imx274_stop);
+	pm_runtime_disable(&client->dev);
+	if (!pm_runtime_status_suspended(&client->dev))
+		imx274_power_off(&client->dev);
+	pm_runtime_set_suspended(&client->dev);
 
 	v4l2_async_unregister_subdev(sd);
 	v4l2_ctrl_handler_free(&imx274->ctrls.handler);
+
 	media_entity_cleanup(&sd->entity);
 	mutex_destroy(&imx274->lock);
-	return 0;
 }
+
+static const struct dev_pm_ops imx274_pm_ops = {
+	SET_RUNTIME_PM_OPS(imx274_power_off, imx274_power_on, NULL)
+};
 
 static struct i2c_driver imx274_i2c_driver = {
 	.driver = {
 		.name	= DRIVER_NAME,
+		.pm = &imx274_pm_ops,
 		.of_match_table	= imx274_of_id_table,
 	},
-	.probe		= imx274_probe,
+	.probe_new	= imx274_probe,
 	.remove		= imx274_remove,
 	.id_table	= imx274_id,
 };

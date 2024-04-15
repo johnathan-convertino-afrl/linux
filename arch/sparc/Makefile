@@ -56,16 +56,10 @@ endif
 
 endif
 
-head-y                 := arch/sparc/kernel/head_$(BITS).o
-
-# See arch/sparc/Kbuild for the core part of the kernel
-core-y                 += arch/sparc/
-
 libs-y                 += arch/sparc/prom/
 libs-y                 += arch/sparc/lib/
 
 drivers-$(CONFIG_PM) += arch/sparc/power/
-drivers-$(CONFIG_OPROFILE)	+= arch/sparc/oprofile/
 
 boot := arch/sparc/boot
 
@@ -76,10 +70,10 @@ image zImage uImage tftpboot.img vmlinux.aout: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 install:
-	$(Q)$(MAKE) $(build)=$(boot) $@
+	$(call cmd,install)
 
-archclean:
-	$(Q)$(MAKE) $(clean)=$(boot)
+archheaders:
+	$(Q)$(MAKE) $(build)=arch/sparc/kernel/syscalls all
 
 PHONY += vdso_install
 vdso_install:

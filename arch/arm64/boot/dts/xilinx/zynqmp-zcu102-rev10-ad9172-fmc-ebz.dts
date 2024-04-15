@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * dts file for AD9172-FMC-EBZ on Xilinx ZynqMP ZCU102 Rev 1.0
+ * Analog Devices AD917x-FMC-EBZ
+ * https://wiki.analog.com/resources/eval/dpg/ad917x-fmc-ebz
+ * https://wiki.analog.com/resources/eval/dpg/eval-ad9172
  *
- * Copyright (C) 2018-2019 Analog Devices Inc.
+ * hdl_project: <dac_fmc_ebz/zcu102>
+ * board_revision: <>
+ *
+ * Copyright (C) 2018-2022 Analog Devices Inc.
  */
 
 #include "zynqmp-zcu102-rev1.0.dts"
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/jesd204/adxcvr.h>
 
 &i2c1 {
 	i2c-mux@75 {
@@ -43,20 +49,6 @@
 			reg = <0x9c420000 0x10000>;
 			interrupts = <0 108 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <128>;
-					adi,source-bus-type = <0>;
-					adi,destination-bus-width = <256>;
-					adi,destination-bus-type = <1>;
-					adi,cyclic;
-				};
-			};
 		};
 
 		axi_ad9172_core: axi-ad9172-hpc@84a04000 {
@@ -66,6 +58,11 @@
 			dma-names = "tx";
 			spibus-connected = <&dac0_ad9172>;
 			adi,axi-pl-fifo-enable;
+
+			/* jesd204-fsm support */
+			jesd204-device;
+			#jesd204-cells = <2>;
+			jesd204-inputs = <&axi_ad9172_jesd 0 0>;
 		};
 
 		axi_ad9172_jesd: axi-jesd204-tx@84a90000 {
@@ -77,14 +74,13 @@
 			clocks = <&zynqmp_clk 71>, <&axi_ad9172_adxcvr 1>, <&axi_ad9172_adxcvr 0>;
 			clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
-			adi,octets-per-frame = <1>;
-			adi,frames-per-multiframe = <32>;
-			adi,converter-resolution = <16>;
-			adi,bits-per-sample = <16>;
-			adi,converters-per-device = <2>;
-
 			#clock-cells = <0>;
 			clock-output-names = "jesd_dac_lane_clk";
+
+			/* jesd204-fsm support */
+			jesd204-device;
+			#jesd204-cells = <2>;
+			jesd204-inputs = <&axi_ad9172_adxcvr 0 0>;
 		};
 
 		axi_ad9172_adxcvr: axi-adxcvr-tx@84a60000 {
@@ -94,12 +90,17 @@
 			clocks = <&hmc7044 12>;
 			clock-names = "conv";
 
-			adi,sys-clk-select = <3>;
-			adi,out-clk-select = <3>;
+			adi,sys-clk-select = <XCVR_QPLL>;
+			adi,out-clk-select = <XCVR_REFCLK>;
 			adi,use-lpm-enable;
 
 			#clock-cells = <1>;
 			clock-output-names = "dac_gt_clk", "tx_out_clk";
+
+			/* jesd204-fsm support */
+			jesd204-device;
+			#jesd204-cells = <2>;
+			jesd204-inputs = <&hmc7044 0 0>;
 		};
 
 		axi_sysid_0: axi-sysid-0@85000000 {

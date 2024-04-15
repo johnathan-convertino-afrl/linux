@@ -85,6 +85,14 @@ typedef struct {
 	hw_open_t hw_open;	/**< Function Pointer to HAL initialization function*/
 	hw_close_t hw_close;	/**< Function Pointer to HAL de-initialization function*/
 	uint64_t adc_clk_freq_hz;   /**< ADC Clock Frequency in Hz. Valid range 2.5GHz to 3.1 GHz */
+
+	uint64_t input_clk_min_hz;
+	uint64_t input_clk_max_hz;
+	uint64_t adc_clk_min_hz;
+	uint64_t adc_clk_max_hz;
+	uint32_t slr_max_mbps;
+	uint32_t slr_min_mbps;
+	uint32_t model;
 } ad9208_handle_t;
 
 /**
@@ -1066,6 +1074,8 @@ int ad9208_get_revision(ad9208_handle_t *h, uint8_t *rev_major,
 
 int ad9208_adc_set_input_scale(ad9208_handle_t *h,
 			       ad9208_adc_scale_range_t full_scale_range);
+
+int ad9208_adc_get_input_scale(ad9208_handle_t *h, uint8_t *full_scale_range);
 
 int ad9208_get_decimation(ad9208_handle_t *h, uint8_t *dcm);
 

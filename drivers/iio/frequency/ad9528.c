@@ -12,6 +12,7 @@
 #include <linux/sysfs.h>
 #include <linux/spi/spi.h>
 #include <linux/regulator/consumer.h>
+#include <linux/gcd.h>
 #include <linux/gpio/consumer.h>
 #include <linux/err.h>
 #include <linux/module.h>
@@ -26,6 +27,7 @@
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 #include <linux/iio/frequency/ad9528.h>
+#include <linux/jesd204/jesd204.h>
 #include <dt-bindings/iio/frequency/ad9528.h>
 
 #define AD9528_READ	(1 << 15)
@@ -158,8 +160,8 @@
 #define AD9528_CLK_DIST_DIV(x)			((((x) - 1) & 0xFF) << 16)
 #define AD9528_CLK_DIST_DIV_MASK		(0xFF << 16)
 #define AD9528_CLK_DIST_DIV_REV(x)		((((x) >> 16) & 0xFF) + 1)
-#define AD9528_CLK_DIST_DRIVER_MODE(x)		(((x) & 0x3) << 13)
-#define AD9528_CLK_DIST_DRIVER_MODE_REV(x)	(((x) >> 13) & 0x3)
+#define AD9528_CLK_DIST_DRIVER_MODE(x)		(((x) & 0x3) << 14)
+#define AD9528_CLK_DIST_DRIVER_MODE_REV(x)	(((x) >> 14) & 0x3)
 #define AD9528_CLK_DIST_DIV_PHASE(x)		(((x) & 0x3F) << 8)
 #define AD9528_CLK_DIST_DIV_PHASE_MASK		(0x3F << 8)
 #define AD9528_CLK_DIST_DIV_PHASE_REV(x)	(((x) >> 8) & 0x3F)
@@ -266,13 +268,17 @@ struct ad9528_outputs {
 
 struct ad9528_state {
 	struct spi_device		*spi;
-	struct regulator		*reg;
 	struct ad9528_platform_data	*pdata;
 	struct ad9528_outputs		output[AD9528_NUM_CHAN];
 	struct iio_chan_spec		ad9528_channels[AD9528_NUM_CHAN];
 	struct clk_onecell_data		clk_data;
 	struct clk			*clks[AD9528_NUM_CHAN];
 	struct gpio_desc			*reset_gpio;
+	struct gpio_desc		*sysref_req_gpio;
+	struct jesd204_dev 		*jdev;
+	u32				jdev_lmfc_lemc_rate;
+	u32				jdev_lmfc_lemc_gcd;
+	bool				is_sysref_provider;
 
 	unsigned long		vco_out_freq[AD9528_NUM_CLK_SRC];
 	unsigned long		sysref_src_pll2;
@@ -859,7 +865,7 @@ static struct clk *ad9528_clk_register(struct iio_dev *indio_dev, unsigned num,
 	output->is_enabled = is_enabled;
 
 	/* register the clock */
-	clk = clk_register(&st->spi->dev, &output->hw);
+	clk = devm_clk_register(&st->spi->dev, &output->hw);
 	st->clk_data.clks[num] = clk;
 
 	return clk;
@@ -880,7 +886,7 @@ static int ad9528_clks_register(struct iio_dev *indio_dev)
 		struct clk *clk;
 
 		chan = &pdata->channels[i];
-		if (chan->channel_num >= AD9528_NUM_CHAN || chan->output_dis)
+		if (chan->channel_num >= AD9528_NUM_CHAN)
 			continue;
 
 		clk = ad9528_clk_register(indio_dev, chan->channel_num,
@@ -1093,10 +1099,9 @@ pll2_bypassed:
 		chan = &pdata->channels[i];
 		if (chan->channel_num >= AD9528_NUM_CHAN)
 			continue;
-		if (chan->output_dis)
-			continue;
+		if (!chan->output_dis)
+			__set_bit(chan->channel_num, &active_mask);
 
-		__set_bit(chan->channel_num, &active_mask);
 		if (chan->sync_ignore_en)
 			__set_bit(chan->channel_num, &ignoresync_mask);
 		ret = ad9528_write(indio_dev,
@@ -1230,6 +1235,213 @@ pll2_bypassed:
 	return 0;
 }
 
+static int ad9528_lmfc_lemc_validate(struct ad9528_state *st, u64 dividend, u32 divisor)
+{
+	u32 rem, rem_l, rem_u, gcd_val, min;
+
+	if (divisor > dividend) {
+		unsigned long best_num, best_den;
+
+		rational_best_approximation(dividend, divisor,
+			65535, 65535, &best_num, &best_den);
+
+		divisor /= best_den;
+	}
+
+	gcd_val = gcd(dividend, divisor);
+	min = DIV_ROUND_CLOSEST(st->sysref_src_pll2, 65535UL);
+
+	if (gcd_val >= min) {
+		dev_dbg(&st->spi->dev,
+			"%s: dividend=%llu divisor=%u GCD=%u (st->sysref_src_pll2=%lu, min=%u)",
+			__func__, dividend, divisor, gcd_val, st->sysref_src_pll2, min);
+
+		st->jdev_lmfc_lemc_gcd = gcd_val;
+		return 0;
+	}
+
+	div_u64_rem(st->sysref_src_pll2, divisor, &rem);
+
+	dev_dbg(&st->spi->dev,
+		"%s: dividend=%llu divisor=%u GCD=%u rem=%u (st->sysref_src_pll2=%lu)",
+		__func__, dividend, divisor, gcd_val, rem, st->sysref_src_pll2);
+
+	div_u64_rem(dividend, divisor, &rem);
+	div_u64_rem(dividend, divisor - 1, &rem_l);
+	div_u64_rem(dividend, divisor + 1, &rem_u);
+
+	if (rem_l > rem && rem_u > rem) {
+		if (st->jdev_lmfc_lemc_gcd)
+			st->jdev_lmfc_lemc_gcd = min(st->jdev_lmfc_lemc_gcd, divisor);
+		else
+			st->jdev_lmfc_lemc_gcd = divisor;
+
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int ad9528_jesd204_link_supported(struct jesd204_dev *jdev,
+		enum jesd204_state_op_reason reason,
+		struct jesd204_link *lnk)
+{
+	struct device *dev = jesd204_dev_to_device(jdev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct ad9528_state *st = iio_priv(indio_dev);
+	int ret;
+	unsigned long rate;
+
+	if (reason != JESD204_STATE_OP_REASON_INIT) {
+		st->jdev_lmfc_lemc_rate = 0;
+		st->jdev_lmfc_lemc_gcd = 0;
+
+		return JESD204_STATE_CHANGE_DONE;
+	}
+
+	dev_dbg(dev, "%s:%d link_num %u reason %s\n", __func__, __LINE__, lnk->link_id, jesd204_state_op_reason_str(reason));
+
+	ret = jesd204_link_get_lmfc_lemc_rate(lnk, &rate);
+	if (ret < 0)
+		return ret;
+
+	if (st->jdev_lmfc_lemc_rate) {
+		st->jdev_lmfc_lemc_rate = min(st->jdev_lmfc_lemc_rate, (u32)rate);
+		ret = ad9528_lmfc_lemc_validate(st, st->jdev_lmfc_lemc_gcd, rate);
+	} else {
+		st->jdev_lmfc_lemc_rate = rate;
+		ret = ad9528_lmfc_lemc_validate(st, st->sysref_src_pll2, rate);
+	}
+
+	dev_dbg(dev, "%s:%d link_num %u LMFC/LEMC %u/%lu gcd %u\n",
+		__func__, __LINE__, lnk->link_id, st->jdev_lmfc_lemc_rate,
+		rate, st->jdev_lmfc_lemc_gcd);
+
+	if (ret && lnk->subclass != JESD204_SUBCLASS_0)
+		return ret;
+
+	return JESD204_STATE_CHANGE_DONE;
+}
+
+static int ad9528_jesd204_sysref(struct jesd204_dev *jdev)
+{
+	struct device *dev = jesd204_dev_to_device(jdev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct ad9528_state *st = iio_priv(indio_dev);
+	int ret, val;
+
+	dev_dbg(dev, "%s:%d\n", __func__, __LINE__);
+
+	mutex_lock(&st->lock);
+
+	if (st->sysref_req_gpio && st->pdata->sysref_req_en) {
+		gpiod_direction_output(st->sysref_req_gpio, 1);
+		mdelay(1);
+		ret = gpiod_direction_output(st->sysref_req_gpio, 0);
+	} else {
+		val = ad9528_read(indio_dev, AD9528_SYSREF_CTRL);
+		if (val < 0) {
+			mutex_unlock(&st->lock);
+			return val;
+		}
+
+		val &= ~AD9528_SYSREF_PATTERN_REQ;
+
+		ad9528_write(indio_dev, AD9528_SYSREF_CTRL, val);
+
+		val |= AD9528_SYSREF_PATTERN_REQ;
+
+		ret = ad9528_write(indio_dev, AD9528_SYSREF_CTRL, val);
+
+		ad9528_io_update(indio_dev);
+	}
+
+	mutex_unlock(&st->lock);
+
+	return ret;
+}
+
+static int ad9528_jesd204_link_pre_setup(struct jesd204_dev *jdev,
+		enum jesd204_state_op_reason reason,
+		struct jesd204_link *lnk)
+{
+	struct device *dev = jesd204_dev_to_device(jdev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct ad9528_state *st = iio_priv(indio_dev);
+	int ret, kdiv;
+
+	if (reason != JESD204_STATE_OP_REASON_INIT)
+		return JESD204_STATE_CHANGE_DONE;
+
+	dev_dbg(dev, "%s:%d link_num %u reason %s\n", __func__, __LINE__, lnk->link_id, jesd204_state_op_reason_str(reason));
+
+
+	if (st->pdata->jdev_desired_sysref_freq && (st->jdev_lmfc_lemc_gcd %
+		st->pdata->jdev_desired_sysref_freq == 0)) {
+		st->jdev_lmfc_lemc_gcd = st->pdata->jdev_desired_sysref_freq;
+	} else {
+		while ((st->jdev_lmfc_lemc_gcd >
+			st->pdata->jdev_max_sysref_freq) &&
+			(st->jdev_lmfc_lemc_gcd %
+			(st->jdev_lmfc_lemc_gcd >> 1) == 0))
+			st->jdev_lmfc_lemc_gcd >>= 1;
+	}
+
+	kdiv = DIV_ROUND_CLOSEST(st->sysref_src_pll2, st->jdev_lmfc_lemc_gcd);
+	kdiv = clamp_t(unsigned long, kdiv, 1UL, 65535UL);
+
+	ret = ad9528_write(indio_dev, AD9528_SYSREF_K_DIVIDER,
+			   AD9528_SYSREF_K_DIV(kdiv));
+
+	if (!ret)
+		st->vco_out_freq[AD9528_SYSREF] =
+			DIV_ROUND_CLOSEST(st->sysref_src_pll2, kdiv);
+
+	ad9528_io_update(indio_dev);
+
+	if (st->sysref_req_gpio && st->pdata->sysref_req_en &&
+		st->pdata->sysref_pattern_mode == SYSREF_PATTERN_CONTINUOUS)
+		gpiod_direction_output(st->sysref_req_gpio, 1);
+
+	return JESD204_STATE_CHANGE_DONE;
+}
+
+static int ad9528_jesd204_clks_sync(struct jesd204_dev *jdev,
+				      enum jesd204_state_op_reason reason)
+{
+	struct device *dev = jesd204_dev_to_device(jdev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	int ret;
+
+	if (reason != JESD204_STATE_OP_REASON_INIT)
+		return JESD204_STATE_CHANGE_DONE;
+
+	dev_dbg(dev, "%s:%d reason %s\n", __func__, __LINE__,
+		jesd204_state_op_reason_str(reason));
+
+	ret = ad9528_sync(indio_dev);
+	if (ret)
+		return ret;
+
+	return JESD204_STATE_CHANGE_DONE;
+}
+
+static const struct jesd204_dev_data jesd204_ad9528_init = {
+	.sysref_cb = ad9528_jesd204_sysref,
+	.state_ops = {
+		[JESD204_OP_LINK_SUPPORTED] = {
+			.per_link = ad9528_jesd204_link_supported,
+		},
+		[JESD204_OP_LINK_PRE_SETUP] = {
+			.per_link = ad9528_jesd204_link_pre_setup,
+		},
+		[JESD204_OP_CLK_SYNC_STAGE1] = {
+			.per_device = ad9528_jesd204_clks_sync,
+			.mode = JESD204_STATE_OP_MODE_PER_DEVICE,
+		},
+	},
+};
+
 #ifdef CONFIG_OF
 static struct ad9528_platform_data *ad9528_parse_dt(struct device *dev)
 {
@@ -1318,6 +1530,13 @@ static struct ad9528_platform_data *ad9528_parse_dt(struct device *dev)
 	of_property_read_u32(np, "adi,sysref-request-trigger-mode", &tmp);
 	pdata->sysref_req_trigger_mode = tmp;
 
+	pdata->jdev_max_sysref_freq = INT_MAX;
+	of_property_read_u32(np, "adi,jesd204-max-sysref-frequency-hz",
+			     &pdata->jdev_max_sysref_freq);
+
+	of_property_read_u32(np, "adi,jesd204-desired-sysref-frequency-hz",
+			     &pdata->jdev_desired_sysref_freq);
+
 	/* PLL2 Setting */
 	of_property_read_u32(np, "adi,pll2-charge-pump-current-nA",
 			     &pdata->pll2_charge_pump_current_nA);
@@ -1384,21 +1603,39 @@ static struct ad9528_platform_data *ad9528_parse_dt(struct device *dev)
 
 	cnt = 0;
 	for_each_child_of_node(np, chan_np) {
-		of_property_read_u32(chan_np, "reg",
+		ret = of_property_read_u32(chan_np, "reg",
 				     &pdata->channels[cnt].channel_num);
+		if (ret) {
+			dev_err(dev, "missing reg property in channel node\n");
+			return NULL;
+		}
 		pdata->channels[cnt].sync_ignore_en = of_property_read_bool(
 				chan_np, "adi,sync-ignore-enable");
 		pdata->channels[cnt].output_dis =
 			of_property_read_bool(chan_np, "adi,output-dis");
 
-		of_property_read_u32(chan_np, "adi,driver-mode", &tmp);
+		tmp = DRIVER_MODE_LVDS;
+		ret = of_property_read_u32(chan_np, "adi,driver-mode", &tmp);
 		pdata->channels[cnt].driver_mode = tmp;
+		if (ret && !pdata->channels[cnt].output_dis)
+			dev_warn(dev, "adi,driver-mode not set - apply default to DRIVER_MODE_LVDS\n");
+
+		tmp = 0;
 		of_property_read_u32(chan_np, "adi,divider-phase", &tmp);
 		pdata->channels[cnt].divider_phase = tmp;
-		of_property_read_u32(chan_np, "adi,channel-divider", &tmp);
+
+		tmp = 1;
+		ret = of_property_read_u32(chan_np, "adi,channel-divider", &tmp);
 		pdata->channels[cnt].channel_divider = tmp;
-		of_property_read_u32(chan_np, "adi,signal-source", &tmp);
+		if (ret && !pdata->channels[cnt].output_dis)
+			dev_warn(dev, "adi,channel-divider not set - apply default to 1\n");
+
+		tmp = SOURCE_VCO;
+		ret = of_property_read_u32(chan_np, "adi,signal-source", &tmp);
 		pdata->channels[cnt].signal_source = tmp;
+		if (ret && !pdata->channels[cnt].output_dis)
+			dev_warn(dev, "adi,signal-source not set - apply default to SOURCE_VCO\n");
+
 		ret = of_property_read_string(
 				chan_np, "adi,extended-name", &str);
 		if (ret >= 0)
@@ -1432,6 +1669,11 @@ static int ad9528_probe(struct spi_device *spi)
 	if (PTR_ERR(clk) == -EPROBE_DEFER)
 		return -EPROBE_DEFER;
 
+	ret = devm_regulator_get_enable(&spi->dev, "vcc");
+	if (ret)
+		return dev_err_probe(&spi->dev, ret,
+				     "Failed to get vcc regulator");
+
 	if (spi->dev.of_node)
 		pdata = ad9528_parse_dt(&spi->dev);
 	else
@@ -1448,14 +1690,17 @@ static int ad9528_probe(struct spi_device *spi)
 
 	st = iio_priv(indio_dev);
 
+	st->jdev = devm_jesd204_dev_register(&spi->dev, &jesd204_ad9528_init);
+	if (IS_ERR(st->jdev))
+		return PTR_ERR(st->jdev);
+
 	mutex_init(&st->lock);
 
-	st->reg = devm_regulator_get(&spi->dev, "vcc");
-	if (!IS_ERR(st->reg)) {
-		ret = regulator_enable(st->reg);
-		if (ret)
-			return ret;
-	}
+	st->sysref_req_gpio = devm_gpiod_get_optional(&spi->dev, "sysref-req",
+					GPIOD_OUT_LOW);
+	if (IS_ERR(st->sysref_req_gpio))
+		return dev_err_probe(&spi->dev, PTR_ERR(st->sysref_req_gpio),
+				     "cannot get sysref request gpio\n");
 
 	status0_gpio = devm_gpiod_get_optional(&spi->dev,
 					"status0", GPIOD_OUT_LOW);
@@ -1489,32 +1734,13 @@ static int ad9528_probe(struct spi_device *spi)
 
 	ret = ad9528_setup(indio_dev);
 	if (ret < 0)
-		goto error_disable_reg;
+		return ret;
 
-	ret = iio_device_register(indio_dev);
+	ret = devm_iio_device_register(&spi->dev, indio_dev);
 	if (ret)
-		goto error_disable_reg;
+		return ret;
 
-	return 0;
-
-error_disable_reg:
-	if (!IS_ERR(st->reg))
-		regulator_disable(st->reg);
-
-	return ret;
-}
-
-static int ad9528_remove(struct spi_device *spi)
-{
-	struct iio_dev *indio_dev = spi_get_drvdata(spi);
-	struct ad9528_state *st = iio_priv(indio_dev);
-
-	iio_device_unregister(indio_dev);
-
-	if (!IS_ERR(st->reg))
-		regulator_disable(st->reg);
-
-	return 0;
+	return jesd204_fsm_start(st->jdev, JESD204_LINKS_ALL);
 }
 
 static const struct spi_device_id ad9528_id[] = {
@@ -1526,10 +1752,8 @@ MODULE_DEVICE_TABLE(spi, ad9528_id);
 static struct spi_driver ad9528_driver = {
 	.driver = {
 		.name	= "ad9528",
-		.owner	= THIS_MODULE,
 	},
 	.probe		= ad9528_probe,
-	.remove		= ad9528_remove,
 	.id_table	= ad9528_id,
 };
 module_spi_driver(ad9528_driver);

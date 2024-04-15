@@ -1,23 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (C) COPYRIGHT 2016 ARM Limited. All rights reserved.
  * Author: Liviu Dudau <Liviu.Dudau@arm.com>
  *
- * This program is free software and is provided to you under the terms of the
- * GNU General Public License version 2 as published by the Free Software
- * Foundation, and any use by you of this program is subject to the terms
- * of such GNU licence.
- *
  * ARM Mali DP500/DP550/DP650 driver (crtc operations)
  */
 
-#include <drm/drmP.h>
+#include <linux/clk.h>
+#include <linux/pm_runtime.h>
+
+#include <video/videomode.h>
+
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_crtc_helper.h>
-#include <linux/clk.h>
-#include <linux/pm_runtime.h>
-#include <video/videomode.h>
+#include <drm/drm_framebuffer.h>
+#include <drm/drm_print.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
 
 #include "malidp_drv.h"
 #include "malidp_hw.h"
@@ -47,7 +47,7 @@ static enum drm_mode_status malidp_crtc_mode_valid(struct drm_crtc *crtc,
 }
 
 static void malidp_crtc_atomic_enable(struct drm_crtc *crtc,
-				      struct drm_crtc_state *old_state)
+				      struct drm_atomic_state *state)
 {
 	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
 	struct malidp_hw_device *hwdev = malidp->dev;
@@ -71,8 +71,10 @@ static void malidp_crtc_atomic_enable(struct drm_crtc *crtc,
 }
 
 static void malidp_crtc_atomic_disable(struct drm_crtc *crtc,
-				       struct drm_crtc_state *old_state)
+				       struct drm_atomic_state *state)
 {
+	struct drm_crtc_state *old_state = drm_atomic_get_old_crtc_state(state,
+									 crtc);
 	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
 	struct malidp_hw_device *hwdev = malidp->dev;
 	int err;
@@ -336,8 +338,10 @@ mclk_calc:
 }
 
 static int malidp_crtc_atomic_check(struct drm_crtc *crtc,
-				    struct drm_crtc_state *state)
+				    struct drm_atomic_state *state)
 {
+	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
+									  crtc);
 	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
 	struct malidp_hw_device *hwdev = malidp->dev;
 	struct drm_plane *plane;
@@ -348,19 +352,20 @@ static int malidp_crtc_atomic_check(struct drm_crtc *crtc,
 
 	/*
 	 * check if there is enough rotation memory available for planes
-	 * that need 90° and 270° rotation. Each plane has set its required
-	 * memory size in the ->plane_check() callback, here we only make
-	 * sure that the sums are less that the total usable memory.
+	 * that need 90° and 270° rotion or planes that are compressed.
+	 * Each plane has set its required memory size in the ->plane_check()
+	 * callback, here we only make sure that the sums are less that the
+	 * total usable memory.
 	 *
 	 * The rotation memory allocation algorithm (for each plane):
-	 *  a. If no more rotated planes exist, all remaining rotate
-	 *     memory in the bank is available for use by the plane.
-	 *  b. If other rotated planes exist, and plane's layer ID is
-	 *     DE_VIDEO1, it can use all the memory from first bank if
-	 *     secondary rotation memory bank is available, otherwise it can
+	 *  a. If no more rotated or compressed planes exist, all remaining
+	 *     rotate memory in the bank is available for use by the plane.
+	 *  b. If other rotated or compressed planes exist, and plane's
+	 *     layer ID is DE_VIDEO1, it can use all the memory from first bank
+	 *     if secondary rotation memory bank is available, otherwise it can
 	 *     use up to half the bank's memory.
-	 *  c. If other rotated planes exist, and plane's layer ID is not
-	 *     DE_VIDEO1, it can use half of the available memory
+	 *  c. If other rotated or compressed planes exist, and plane's layer ID
+	 *     is not DE_VIDEO1, it can use half of the available memory.
 	 *
 	 * Note: this algorithm assumes that the order in which the planes are
 	 * checked always has DE_VIDEO1 plane first in the list if it is
@@ -371,8 +376,10 @@ static int malidp_crtc_atomic_check(struct drm_crtc *crtc,
 	 */
 
 	/* first count the number of rotated planes */
-	drm_atomic_crtc_state_for_each_plane_state(plane, pstate, state) {
-		if (pstate->rotation & MALIDP_ROTATED_MASK)
+	drm_atomic_crtc_state_for_each_plane_state(plane, pstate, crtc_state) {
+		struct drm_framebuffer *fb = pstate->fb;
+
+		if ((pstate->rotation & MALIDP_ROTATED_MASK) || fb->modifier)
 			rotated_planes++;
 	}
 
@@ -385,11 +392,12 @@ static int malidp_crtc_atomic_check(struct drm_crtc *crtc,
 		rot_mem_free += hwdev->rotation_memory[1];
 
 	/* now validate the rotation memory requirements */
-	drm_atomic_crtc_state_for_each_plane_state(plane, pstate, state) {
+	drm_atomic_crtc_state_for_each_plane_state(plane, pstate, crtc_state) {
 		struct malidp_plane *mp = to_malidp_plane(plane);
 		struct malidp_plane_state *ms = to_malidp_plane_state(pstate);
+		struct drm_framebuffer *fb = pstate->fb;
 
-		if (pstate->rotation & MALIDP_ROTATED_MASK) {
+		if ((pstate->rotation & MALIDP_ROTATED_MASK) || fb->modifier) {
 			/* process current plane */
 			rotated_planes--;
 
@@ -412,18 +420,18 @@ static int malidp_crtc_atomic_check(struct drm_crtc *crtc,
 	}
 
 	/* If only the writeback routing has changed, we don't need a modeset */
-	if (state->connectors_changed) {
+	if (crtc_state->connectors_changed) {
 		u32 old_mask = crtc->state->connector_mask;
-		u32 new_mask = state->connector_mask;
+		u32 new_mask = crtc_state->connector_mask;
 
 		if ((old_mask ^ new_mask) ==
 		    (1 << drm_connector_index(&malidp->mw_connector.base)))
-			state->connectors_changed = false;
+			crtc_state->connectors_changed = false;
 	}
 
-	ret = malidp_crtc_atomic_check_gamma(crtc, state);
-	ret = ret ? ret : malidp_crtc_atomic_check_ctm(crtc, state);
-	ret = ret ? ret : malidp_crtc_atomic_check_scaling(crtc, state);
+	ret = malidp_crtc_atomic_check_gamma(crtc, crtc_state);
+	ret = ret ? ret : malidp_crtc_atomic_check_ctm(crtc, crtc_state);
+	ret = ret ? ret : malidp_crtc_atomic_check_scaling(crtc, crtc_state);
 
 	return ret;
 }
@@ -459,23 +467,6 @@ static struct drm_crtc_state *malidp_crtc_duplicate_state(struct drm_crtc *crtc)
 	return &state->base;
 }
 
-static void malidp_crtc_reset(struct drm_crtc *crtc)
-{
-	struct malidp_crtc_state *state = NULL;
-
-	if (crtc->state) {
-		state = to_malidp_crtc_state(crtc->state);
-		__drm_atomic_helper_crtc_destroy_state(crtc->state);
-	}
-
-	kfree(state);
-	state = kzalloc(sizeof(*state), GFP_KERNEL);
-	if (state) {
-		crtc->state = &state->base;
-		crtc->state->crtc = crtc;
-	}
-}
-
 static void malidp_crtc_destroy_state(struct drm_crtc *crtc,
 				      struct drm_crtc_state *state)
 {
@@ -487,6 +478,20 @@ static void malidp_crtc_destroy_state(struct drm_crtc *crtc,
 	}
 
 	kfree(mali_state);
+}
+
+static void malidp_crtc_reset(struct drm_crtc *crtc)
+{
+	struct malidp_crtc_state *state =
+		kzalloc(sizeof(*state), GFP_KERNEL);
+
+	if (crtc->state)
+		malidp_crtc_destroy_state(crtc, crtc->state);
+
+	if (state)
+		__drm_atomic_helper_crtc_reset(crtc, &state->base);
+	else
+		__drm_atomic_helper_crtc_reset(crtc, NULL);
 }
 
 static int malidp_crtc_enable_vblank(struct drm_crtc *crtc)
@@ -509,7 +514,6 @@ static void malidp_crtc_disable_vblank(struct drm_crtc *crtc)
 }
 
 static const struct drm_crtc_funcs malidp_crtc_funcs = {
-	.gamma_set = drm_atomic_helper_legacy_gamma_set,
 	.destroy = drm_crtc_cleanup,
 	.set_config = drm_atomic_helper_set_config,
 	.page_flip = drm_atomic_helper_page_flip,

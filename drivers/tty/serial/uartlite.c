@@ -8,6 +8,7 @@
 
 #include <linux/platform_device.h>
 #include <linux/module.h>
+#include <linux/bitfield.h>
 #include <linux/console.h>
 #include <linux/serial.h>
 #include <linux/serial_core.h>
@@ -17,6 +18,7 @@
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_device.h>
@@ -27,12 +29,13 @@
 #define ULITE_NAME		"ttyUL"
 #define ULITE_MAJOR		204
 #define ULITE_MINOR		187
+#define ULITE_NR_UARTS		CONFIG_SERIAL_UARTLITE_NR_UARTS
 
 /* ---------------------------------------------------------------------
  * Register definitions
  *
  * For register details see datasheet:
- * http://www.xilinx.com/support/documentation/ip_documentation/opb_uartlite.pdf
+ * https://www.xilinx.com/support/documentation/ip_documentation/opb_uartlite.pdf
  */
 
 #define ULITE_RX		0x00
@@ -54,18 +57,25 @@
 #define ULITE_CONTROL_RST_TX	0x01
 #define ULITE_CONTROL_RST_RX	0x02
 #define ULITE_CONTROL_IE	0x10
-#define UART_AUTOSUSPEND_TIMEOUT	3000
+#define UART_AUTOSUSPEND_TIMEOUT	3000	/* ms */
 
 /* Static pointer to console port */
 #ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
 static struct uart_port *console_port;
 #endif
 
+/**
+ * struct uartlite_data: Driver private data
+ * reg_ops: Functions to read/write registers
+ * clk: Our parent clock, if present
+ * baud: The baud rate configured when this device was synthesized
+ * cflags: The cflags for parity and data bits
+ */
 struct uartlite_data {
 	const struct uartlite_reg_ops *reg_ops;
 	struct clk *clk;
-	int id;
-	struct uart_driver *ulite_uart_driver;
+	unsigned int baud;
+	tcflag_t cflags;
 };
 
 struct uartlite_reg_ops {
@@ -117,6 +127,9 @@ static inline void uart_out32(u32 val, u32 offset, struct uart_port *port)
 	pdata->reg_ops->out(val, port->membase + offset);
 }
 
+static struct uart_port ulite_ports[ULITE_NR_UARTS];
+
+static struct uart_driver ulite_uart_driver;
 
 /* ---------------------------------------------------------------------
  * Core UART driver operations
@@ -301,11 +314,18 @@ static void ulite_shutdown(struct uart_port *port)
 	clk_disable(pdata->clk);
 }
 
-static void ulite_set_termios(struct uart_port *port, struct ktermios *termios,
-			      struct ktermios *old)
+static void ulite_set_termios(struct uart_port *port,
+			      struct ktermios *termios,
+			      const struct ktermios *old)
 {
 	unsigned long flags;
-	unsigned int baud;
+	struct uartlite_data *pdata = port->private_data;
+
+	/* Set termios to what the hardware supports */
+	termios->c_iflag &= ~BRKINT;
+	termios->c_cflag &= ~(CSTOPB | PARENB | PARODD | CSIZE);
+	termios->c_cflag |= pdata->cflags & (PARENB | PARODD | CSIZE);
+	tty_termios_encode_baud_rate(termios, pdata->baud, pdata->baud);
 
 	spin_lock_irqsave(&port->lock, flags);
 
@@ -328,8 +348,7 @@ static void ulite_set_termios(struct uart_port *port, struct ktermios *termios,
 			| ULITE_STATUS_FRAME | ULITE_STATUS_OVERRUN;
 
 	/* update timeout */
-	baud = uart_get_baud_rate(port, termios, old, 0, 460800);
-	uart_update_timeout(port, termios->c_cflag, baud);
+	uart_update_timeout(port, termios->c_cflag, pdata->baud);
 
 	spin_unlock_irqrestore(&port->lock, flags);
 }
@@ -392,8 +411,12 @@ static int ulite_verify_port(struct uart_port *port, struct serial_struct *ser)
 static void ulite_pm(struct uart_port *port, unsigned int state,
 		     unsigned int oldstate)
 {
+	int ret;
+
 	if (!state) {
-		pm_runtime_get_sync(port->dev);
+		ret = pm_runtime_get_sync(port->dev);
+		if (ret < 0)
+			dev_err(port->dev, "Failed to enable clocks\n");
 	} else {
 		pm_runtime_mark_last_busy(port->dev);
 		pm_runtime_put_autosuspend(port->dev);
@@ -450,27 +473,18 @@ static const struct uart_ops ulite_ops = {
 static void ulite_console_wait_tx(struct uart_port *port)
 {
 	u8 val;
-	unsigned long timeout;
 
 	/*
 	 * Spin waiting for TX fifo to have space available.
 	 * When using the Microblaze Debug Module this can take up to 1s
 	 */
-	timeout = jiffies + msecs_to_jiffies(1000);
-	while (1) {
-		val = uart_in32(ULITE_STATUS, port);
-		if ((val & ULITE_STATUS_TXFULL) == 0)
-			break;
-		if (time_after(jiffies, timeout)) {
-			dev_warn(port->dev,
-				 "timeout waiting for TX buffer empty\n");
-			break;
-		}
-		cpu_relax();
-	}
+	if (read_poll_timeout_atomic(uart_in32, val, !(val & ULITE_STATUS_TXFULL),
+				     0, 1000000, false, ULITE_STATUS, port))
+		dev_warn(port->dev,
+			 "timeout waiting for TX buffer empty\n");
 }
 
-static void ulite_console_putchar(struct uart_port *port, int ch)
+static void ulite_console_putchar(struct uart_port *port, unsigned char ch)
 {
 	ulite_console_wait_tx(port);
 	uart_out32(ch, ULITE_TX, port);
@@ -507,20 +521,22 @@ static void ulite_console_write(struct console *co, const char *s,
 
 static int ulite_console_setup(struct console *co, char *options)
 {
-	struct uart_port *port;
+	struct uart_port *port = NULL;
 	int baud = 9600;
 	int bits = 8;
 	int parity = 'n';
 	int flow = 'n';
 
-
-	port = console_port;
+	if (co->index >= 0 && co->index < ULITE_NR_UARTS)
+		port = ulite_ports + co->index;
 
 	/* Has the device been initialized yet? */
-	if (!port->mapbase) {
+	if (!port || !port->mapbase) {
 		pr_debug("console on ttyUL%i not present\n", co->index);
 		return -ENODEV;
 	}
+
+	console_port = port;
 
 	/* not initialized yet? */
 	if (!port->membase) {
@@ -534,7 +550,17 @@ static int ulite_console_setup(struct console *co, char *options)
 	return uart_set_options(port, co, baud, parity, bits, flow);
 }
 
-static void early_uartlite_putc(struct uart_port *port, int c)
+static struct console ulite_console = {
+	.name	= ULITE_NAME,
+	.write	= ulite_console_write,
+	.device	= uart_console_device,
+	.setup	= ulite_console_setup,
+	.flags	= CON_PRINTBUFFER,
+	.index	= -1, /* Specified on the cmdline (e.g. console=ttyUL0 ) */
+	.data	= &ulite_uart_driver,
+};
+
+static void early_uartlite_putc(struct uart_port *port, unsigned char c)
 {
 	/*
 	 * Limit how many times we'll spin waiting for TX FIFO status.
@@ -543,16 +569,15 @@ static void early_uartlite_putc(struct uart_port *port, int c)
 	 * This limit is pretty arbitrary, unless we are at about 10 baud
 	 * we'll never timeout on a working UART.
 	 */
-
 	unsigned retries = 1000000;
-	/* read status bit - 0x8 offset */
-	while (--retries && (readl(port->membase + 8) & (1 << 3)))
+
+	while (--retries &&
+	       (readl(port->membase + ULITE_STATUS) & ULITE_STATUS_TXFULL))
 		;
 
 	/* Only attempt the iowrite if we didn't timeout */
-	/* write to TX_FIFO - 0x4 offset */
 	if (retries)
-		writel(c & 0xff, port->membase + 4);
+		writel(c & 0xff, port->membase + ULITE_TX);
 }
 
 static void early_uartlite_write(struct console *console,
@@ -577,6 +602,18 @@ OF_EARLYCON_DECLARE(uartlite_a, "xlnx,xps-uartlite-1.00.a", early_uartlite_setup
 
 #endif /* CONFIG_SERIAL_UARTLITE_CONSOLE */
 
+static struct uart_driver ulite_uart_driver = {
+	.owner		= THIS_MODULE,
+	.driver_name	= "uartlite",
+	.dev_name	= ULITE_NAME,
+	.major		= ULITE_MAJOR,
+	.minor		= ULITE_MINOR,
+	.nr		= ULITE_NR_UARTS,
+#ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
+	.cons		= &ulite_console,
+#endif
+};
+
 /* ---------------------------------------------------------------------
  * Port assignment functions (mapping devices to uart_port structures)
  */
@@ -591,15 +628,30 @@ OF_EARLYCON_DECLARE(uartlite_a, "xlnx,xps-uartlite-1.00.a", early_uartlite_setup
  *
  * Returns: 0 on success, <0 otherwise
  */
-static int ulite_assign(struct device *dev, int id, u32 base, int irq,
+static int ulite_assign(struct device *dev, int id, phys_addr_t base, int irq,
 			struct uartlite_data *pdata)
 {
 	struct uart_port *port;
 	int rc;
 
-	port = devm_kzalloc(dev, sizeof(*port), GFP_KERNEL);
-	if (!port)
-		return -ENOMEM;
+	/* if id = -1; then scan for a free id and use that */
+	if (id < 0) {
+		for (id = 0; id < ULITE_NR_UARTS; id++)
+			if (ulite_ports[id].mapbase == 0)
+				break;
+	}
+	if (id < 0 || id >= ULITE_NR_UARTS) {
+		dev_err(dev, "%s%i too large\n", ULITE_NAME, id);
+		return -EINVAL;
+	}
+
+	if ((ulite_ports[id].mapbase) && (ulite_ports[id].mapbase != base)) {
+		dev_err(dev, "cannot assign to %s%i; it is already in use\n",
+			ULITE_NAME, id);
+		return -EBUSY;
+	}
+
+	port = &ulite_ports[id];
 
 	spin_lock_init(&port->lock);
 	port->fifosize = 16;
@@ -613,36 +665,19 @@ static int ulite_assign(struct device *dev, int id, u32 base, int irq,
 	port->flags = UPF_BOOT_AUTOCONF;
 	port->dev = dev;
 	port->type = PORT_UNKNOWN;
+	port->line = id;
 	port->private_data = pdata;
 
 	dev_set_drvdata(dev, port);
 
-#ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
-	/*
-	 * If console hasn't been found yet try to assign this port
-	 * because it is required to be assigned for console setup function.
-	 * If register_console() don't assign value, then console_port pointer
-	 * is cleanup.
-	 */
-	if (!console_port)
-		console_port = port;
-#endif
-
 	/* Register the port */
-	rc = uart_add_one_port(pdata->ulite_uart_driver, port);
+	rc = uart_add_one_port(&ulite_uart_driver, port);
 	if (rc) {
 		dev_err(dev, "uart_add_one_port() failed; err=%i\n", rc);
 		port->mapbase = 0;
 		dev_set_drvdata(dev, NULL);
 		return rc;
 	}
-
-#ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
-	/* This is not port which is used for console that's why clean it up */
-	if (console_port == port &&
-	    !(pdata->ulite_uart_driver->cons->flags & CON_ENABLED))
-		console_port = NULL;
-#endif
 
 	return 0;
 }
@@ -657,9 +692,7 @@ static int ulite_release(struct device *dev)
 	int rc = 0;
 
 	if (port) {
-		struct uartlite_data *pdata = port->private_data;
-
-		rc = uart_remove_one_port(pdata->ulite_uart_driver, port);
+		rc = uart_remove_one_port(&ulite_uart_driver, port);
 		dev_set_drvdata(dev, NULL);
 		port->mapbase = 0;
 	}
@@ -677,11 +710,8 @@ static int __maybe_unused ulite_suspend(struct device *dev)
 {
 	struct uart_port *port = dev_get_drvdata(dev);
 
-	if (port) {
-		struct uartlite_data *pdata = port->private_data;
-
-		uart_suspend_port(pdata->ulite_uart_driver, port);
-	}
+	if (port)
+		uart_suspend_port(&ulite_uart_driver, port);
 
 	return 0;
 }
@@ -696,11 +726,8 @@ static int __maybe_unused ulite_resume(struct device *dev)
 {
 	struct uart_port *port = dev_get_drvdata(dev);
 
-	if (port) {
-		struct uartlite_data *pdata = port->private_data;
-
-		uart_resume_port(pdata->ulite_uart_driver, port);
-	}
+	if (port)
+		uart_resume_port(&ulite_uart_driver, port);
 
 	return 0;
 }
@@ -718,10 +745,16 @@ static int __maybe_unused ulite_runtime_resume(struct device *dev)
 {
 	struct uart_port *port = dev_get_drvdata(dev);
 	struct uartlite_data *pdata = port->private_data;
+	int ret;
 
-	clk_enable(pdata->clk);
+	ret = clk_enable(pdata->clk);
+	if (ret) {
+		dev_err(dev, "Cannot enable clock.\n");
+		return ret;
+	}
 	return 0;
 }
+
 /* ---------------------------------------------------------------------
  * Platform bus binding
  */
@@ -742,184 +775,91 @@ static const struct of_device_id ulite_of_match[] = {
 MODULE_DEVICE_TABLE(of, ulite_of_match);
 #endif /* CONFIG_OF */
 
-/*
- * Maximum number of instances without alias IDs but if there is alias
- * which target "< MAX_UART_INSTANCES" range this ID can't be used.
- */
-#define MAX_UART_INSTANCES	256
-
-/* Stores static aliases list */
-static DECLARE_BITMAP(alias_bitmap, MAX_UART_INSTANCES);
-static int alias_bitmap_initialized;
-
-/* Stores actual bitmap of allocated IDs with alias IDs together */
-static DECLARE_BITMAP(bitmap, MAX_UART_INSTANCES);
-/* Protect bitmap operations to have unique IDs */
-static DEFINE_MUTEX(bitmap_lock);
-
-static int ulite_get_id(struct platform_device *pdev)
-{
-	int ret;
-	int id = pdev->id;
-#ifdef CONFIG_OF
-	const __be32 *prop;
-
-	prop = of_get_property(pdev->dev.of_node, "port-number", NULL);
-	if (prop)
-		id = be32_to_cpup(prop);
-#endif
-
-	mutex_lock(&bitmap_lock);
-
-	/* Alias list is stable that's why get alias bitmap only once */
-	if (!alias_bitmap_initialized) {
-		ret = of_alias_get_alias_list(of_match_ptr(ulite_of_match), "serial",
-					      alias_bitmap, MAX_UART_INSTANCES);
-		if (ret) {
-			mutex_unlock(&bitmap_lock);
-			return ret;
-		}
-
-		alias_bitmap_initialized++;
-	}
-
-	/* Make sure that alias ID is not taken by instance without alias */
-	bitmap_or(bitmap, bitmap, alias_bitmap, MAX_UART_INSTANCES);
-
-	dev_dbg(&pdev->dev, "Alias bitmap: %*pb\n",
-		MAX_UART_INSTANCES, bitmap);
-
-	/* Look for a serialN alias */
-	if (id < 0)
-		id = of_alias_get_id(pdev->dev.of_node, "serial");
-
-	if (id < 0) {
-		dev_warn(&pdev->dev,
-			 "No serial alias passed. Using the first free id\n");
-
-		/*
-		 * Start with id 0 and check if there is no serial0 alias
-		 * which points to device which is compatible with this driver.
-		 * If alias exists then try next free position.
-		 */
-		id = 0;
-
-		for (;;) {
-			dev_info(&pdev->dev, "Checking id %d\n", id);
-			id = find_next_zero_bit(bitmap, MAX_UART_INSTANCES, id);
-
-			/* No free empty instance */
-			if (id == MAX_UART_INSTANCES) {
-				dev_err(&pdev->dev, "No free ID\n");
-				mutex_unlock(&bitmap_lock);
-				return -EINVAL;
-			}
-
-			dev_dbg(&pdev->dev, "The empty id is %d\n", id);
-			/* Check if ID is empty */
-			if (!test_and_set_bit(id, bitmap)) {
-				/* Break the loop if bit is taken */
-				dev_dbg(&pdev->dev,
-					"Selected ID %d allocation passed\n",
-					id);
-				break;
-			}
-			dev_dbg(&pdev->dev,
-				"Selected ID %d allocation failed\n", id);
-			/* if taking bit fails then try next one */
-			id++;
-		}
-	}
-
-	mutex_unlock(&bitmap_lock);
-
-	return id;
-}
-
 static int ulite_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct uartlite_data *pdata;
 	int irq, ret;
-	struct uart_driver *ulite_uart_driver;
-	char *driver_name;
-#ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
-	struct console *ulite_console;
-#endif
+	int id = pdev->id;
 
 	pdata = devm_kzalloc(&pdev->dev, sizeof(struct uartlite_data),
 			     GFP_KERNEL);
 	if (!pdata)
 		return -ENOMEM;
 
-	ulite_uart_driver = devm_kzalloc(&pdev->dev,
-					 sizeof(*ulite_uart_driver),
-					 GFP_KERNEL);
-	if (!ulite_uart_driver)
-		return -ENOMEM;
+	if (IS_ENABLED(CONFIG_OF)) {
+		const char *prop;
+		struct device_node *np = pdev->dev.of_node;
+		u32 val = 0;
 
-	pdata->id = ulite_get_id(pdev);
-	if (pdata->id < 0)
-		return pdata->id;
+		prop = "port-number";
+		ret = of_property_read_u32(np, prop, &id);
+		if (ret && ret != -EINVAL)
+of_err:
+			return dev_err_probe(&pdev->dev, ret,
+					     "could not read %s\n", prop);
 
-	/* There is a need to use unique driver name */
-	driver_name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "%s%d",
-				     ULITE_NAME, pdata->id);
-	if (!driver_name) {
-		ret = -ENOMEM;
-		goto err_out_id;
-	}
+		prop = "current-speed";
+		ret = of_property_read_u32(np, prop, &pdata->baud);
+		if (ret)
+			goto of_err;
 
-	ulite_uart_driver->owner = THIS_MODULE;
-	ulite_uart_driver->driver_name = driver_name;
-	ulite_uart_driver->dev_name = ULITE_NAME;
-	ulite_uart_driver->major = ULITE_MAJOR;
-	ulite_uart_driver->minor = pdata->id;
-	ulite_uart_driver->nr = 1;
-#ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
-	ulite_console = devm_kzalloc(&pdev->dev, sizeof(*ulite_console),
-				     GFP_KERNEL);
-	if (!ulite_console) {
-		ret = -ENOMEM;
-		goto err_out_id;
-	}
+		prop = "xlnx,use-parity";
+		ret = of_property_read_u32(np, prop, &val);
+		if (ret && ret != -EINVAL)
+			goto of_err;
 
-	strncpy(ulite_console->name, ULITE_NAME,
-		sizeof(ulite_console->name));
-	ulite_console->index = pdata->id;
-	ulite_console->write = ulite_console_write;
-	ulite_console->device = uart_console_device;
-	ulite_console->setup = ulite_console_setup;
-	ulite_console->flags = CON_PRINTBUFFER;
-	ulite_uart_driver->cons = ulite_console;
-	ulite_console->data = ulite_uart_driver;
-#endif
+		if (val) {
+			prop = "xlnx,odd-parity";
+			ret = of_property_read_u32(np, prop, &val);
+			if (ret)
+				goto of_err;
 
-	dev_dbg(&pdev->dev, "uartlite: calling uart_register_driver()\n");
-	ret = uart_register_driver(ulite_uart_driver);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "Failed to register driver\n");
-		goto err_out_id;
+			if (val)
+				pdata->cflags |= PARODD;
+			pdata->cflags |= PARENB;
+		}
+
+		val = 8;
+		prop = "xlnx,data-bits";
+		ret = of_property_read_u32(np, prop, &val);
+		if (ret && ret != -EINVAL)
+			goto of_err;
+
+		switch (val) {
+		case 5:
+			pdata->cflags |= CS5;
+			break;
+		case 6:
+			pdata->cflags |= CS6;
+			break;
+		case 7:
+			pdata->cflags |= CS7;
+			break;
+		case 8:
+			pdata->cflags |= CS8;
+			break;
+		default:
+			return dev_err_probe(&pdev->dev, -EINVAL,
+					     "bad data bits %d\n", val);
+		}
+	} else {
+		pdata->baud = 9600;
+		pdata->cflags = CS8;
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		ret = -ENODEV;
-		goto err_out_unregister_driver;
-	}
+	if (!res)
+		return -ENODEV;
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0) {
-		ret = -ENXIO;
-		goto err_out_unregister_driver;
-	}
+	if (irq < 0)
+		return irq;
 
 	pdata->clk = devm_clk_get(&pdev->dev, "s_axi_aclk");
 	if (IS_ERR(pdata->clk)) {
-		if (PTR_ERR(pdata->clk) != -ENOENT) {
-			ret = PTR_ERR(pdata->clk);
-			goto err_out_unregister_driver;
-		}
+		if (PTR_ERR(pdata->clk) != -ENOENT)
+			return PTR_ERR(pdata->clk);
 
 		/*
 		 * Clock framework support is optional, continue on
@@ -931,7 +871,7 @@ static int ulite_probe(struct platform_device *pdev)
 	ret = clk_prepare_enable(pdata->clk);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to prepare clock\n");
-		goto err_out_unregister_driver;
+		return ret;
 	}
 
 	pm_runtime_use_autosuspend(&pdev->dev);
@@ -939,27 +879,21 @@ static int ulite_probe(struct platform_device *pdev)
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 
-	ulite_uart_driver->tty_driver->name_base = pdata->id;
-	pdata->ulite_uart_driver = ulite_uart_driver;
-	ret = ulite_assign(&pdev->dev, pdata->id, res->start, irq, pdata);
-	if (ret < 0)
-		goto err_out_clk_disable;
+	if (!ulite_uart_driver.state) {
+		dev_dbg(&pdev->dev, "uartlite: calling uart_register_driver()\n");
+		ret = uart_register_driver(&ulite_uart_driver);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "Failed to register driver\n");
+			clk_disable_unprepare(pdata->clk);
+			return ret;
+		}
+	}
+
+	ret = ulite_assign(&pdev->dev, id, res->start, irq, pdata);
 
 	pm_runtime_mark_last_busy(&pdev->dev);
 	pm_runtime_put_autosuspend(&pdev->dev);
-	return 0;
 
-err_out_clk_disable:
-	clk_disable_unprepare(pdata->clk);
-	pm_runtime_disable(&pdev->dev);
-	pm_runtime_set_suspended(&pdev->dev);
-	pm_runtime_dont_use_autosuspend(&pdev->dev);
-err_out_unregister_driver:
-	uart_unregister_driver(ulite_uart_driver);
-err_out_id:
-	mutex_lock(&bitmap_lock);
-	clear_bit(pdata->id, bitmap);
-	mutex_unlock(&bitmap_lock);
 	return ret;
 }
 
@@ -969,18 +903,8 @@ static int ulite_remove(struct platform_device *pdev)
 	struct uartlite_data *pdata = port->private_data;
 	int rc;
 
-	clk_unprepare(pdata->clk);
+	clk_disable_unprepare(pdata->clk);
 	rc = ulite_release(&pdev->dev);
-	mutex_lock(&bitmap_lock);
-	clear_bit(pdata->id, bitmap);
-	mutex_unlock(&bitmap_lock);
-
-#ifdef CONFIG_SERIAL_UARTLITE_CONSOLE
-	if (console_port == port)
-		console_port = NULL;
-#endif
-
-	uart_unregister_driver(pdata->ulite_uart_driver);
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 	pm_runtime_dont_use_autosuspend(&pdev->dev);
@@ -1006,6 +930,7 @@ static struct platform_driver ulite_platform_driver = {
 
 static int __init ulite_init(void)
 {
+
 	pr_debug("uartlite: calling platform_driver_register()\n");
 	return platform_driver_register(&ulite_platform_driver);
 }
@@ -1013,6 +938,8 @@ static int __init ulite_init(void)
 static void __exit ulite_exit(void)
 {
 	platform_driver_unregister(&ulite_platform_driver);
+	if (ulite_uart_driver.state)
+		uart_unregister_driver(&ulite_uart_driver);
 }
 
 module_init(ulite_init);

@@ -1,20 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Backlight driver for ArcticSand ARC_X_C_0N_0N Devices
  *
  * Copyright 2016 ArcticSand, Inc.
  * Author : Brian Dodge <bdodge@arcticsand.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/backlight.h>
@@ -373,7 +362,7 @@ probe_err:
 	return ret;
 }
 
-static int arcxcnn_remove(struct i2c_client *cl)
+static void arcxcnn_remove(struct i2c_client *cl)
 {
 	struct arcxcnn *lp = i2c_get_clientdata(cl);
 
@@ -387,8 +376,6 @@ static int arcxcnn_remove(struct i2c_client *cl)
 	lp->bl->props.brightness = 0;
 
 	backlight_update_status(lp->bl);
-
-	return 0;
 }
 
 static const struct of_device_id arcxcnn_dt_ids[] = {

@@ -87,18 +87,25 @@ static inline struct xdmsc_dev *to_xdmsc(struct v4l2_subdev *subdev)
 
 static struct v4l2_mbus_framefmt
 *__xdmsc_get_pad_format(struct xdmsc_dev *xdmsc,
-			struct v4l2_subdev_pad_config *cfg,
+			struct v4l2_subdev_state *sd_state,
 			unsigned int pad, u32 which)
 {
+	struct v4l2_mbus_framefmt *get_fmt;
+
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(&xdmsc->xvip.subdev,
-								cfg, pad);
+		get_fmt = v4l2_subdev_get_try_format(&xdmsc->xvip.subdev,
+						     sd_state, pad);
+		break;
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return &xdmsc->formats[pad];
+		get_fmt = &xdmsc->formats[pad];
+		break;
 	default:
-		return NULL;
+		get_fmt = NULL;
+		break;
 	}
+
+	return get_fmt;
 }
 
 static int xdmsc_s_stream(struct v4l2_subdev *subdev, int enable)
@@ -130,12 +137,18 @@ static const struct v4l2_subdev_video_ops xdmsc_video_ops = {
 };
 
 static int xdmsc_get_format(struct v4l2_subdev *subdev,
-			    struct v4l2_subdev_pad_config *cfg,
+			    struct v4l2_subdev_state *sd_state,
 			    struct v4l2_subdev_format *fmt)
 {
 	struct xdmsc_dev *xdmsc = to_xdmsc(subdev);
+	struct v4l2_mbus_framefmt *get_fmt;
 
-	fmt->format = *__xdmsc_get_pad_format(xdmsc, cfg, fmt->pad, fmt->which);
+	get_fmt = __xdmsc_get_pad_format(xdmsc, sd_state, fmt->pad, fmt->which);
+	if (!get_fmt)
+		return -EINVAL;
+
+	fmt->format = *get_fmt;
+
 	return 0;
 }
 
@@ -175,13 +188,16 @@ xdmsc_is_format_bayer(struct xdmsc_dev *xdmsc, u32 code)
 }
 
 static int xdmsc_set_format(struct v4l2_subdev *subdev,
-			    struct v4l2_subdev_pad_config *cfg,
+			    struct v4l2_subdev_state *sd_state,
 			    struct v4l2_subdev_format *fmt)
 {
 	struct xdmsc_dev *xdmsc = to_xdmsc(subdev);
 	struct v4l2_mbus_framefmt *__format;
 
-	__format = __xdmsc_get_pad_format(xdmsc, cfg, fmt->pad, fmt->which);
+	__format = __xdmsc_get_pad_format(xdmsc, sd_state, fmt->pad, fmt->which);
+	if (!__format)
+		return -EINVAL;
+
 	*__format = fmt->format;
 
 	__format->width = clamp_t(unsigned int, fmt->format.width,
@@ -218,10 +234,10 @@ static int xdmsc_open(struct v4l2_subdev *subdev, struct v4l2_subdev_fh *fh)
 	struct xdmsc_dev *xdmsc = to_xdmsc(subdev);
 	struct v4l2_mbus_framefmt *format;
 
-	format = v4l2_subdev_get_try_format(subdev, fh->pad, XVIP_PAD_SINK);
+	format = v4l2_subdev_get_try_format(subdev, fh->state, XVIP_PAD_SINK);
 	*format = xdmsc->default_formats[XVIP_PAD_SINK];
 
-	format = v4l2_subdev_get_try_format(subdev, fh->pad, XVIP_PAD_SOURCE);
+	format = v4l2_subdev_get_try_format(subdev, fh->state, XVIP_PAD_SOURCE);
 	*format = xdmsc->default_formats[XVIP_PAD_SOURCE];
 	return 0;
 }
@@ -326,6 +342,8 @@ static int xdmsc_probe(struct platform_device *pdev)
 	if (rval < 0)
 		return rval;
 	rval = xvip_init_resources(&xdmsc->xvip);
+	if (rval)
+		return -EIO;
 
 	/* Reset Demosaic IP */
 	gpiod_set_value_cansleep(xdmsc->rst_gpio,

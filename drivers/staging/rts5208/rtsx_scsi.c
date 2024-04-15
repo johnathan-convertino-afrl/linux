@@ -1,19 +1,8 @@
-/* Driver for Realtek PCI-Express card reader
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * Driver for Realtek PCI-Express card reader
  *
  * Copyright(c) 2009-2013 Realtek Semiconductor Corp. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2, or (at your option) any
- * later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * Author:
  *   Wei WANG (wei_wang@realsil.com.cn)
@@ -507,17 +496,16 @@ static int inquiry(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 #ifdef SUPPORT_MAGIC_GATE
-	if ((chip->mspro_formatter_enable) &&
+	if (chip->mspro_formatter_enable &&
 	    (chip->lun2card[lun] & MS_CARD))
 #else
 	if (chip->mspro_formatter_enable)
 #endif
-		if (!card || (card == MS_CARD))
+		if (!card || card == MS_CARD)
 			pro_formatter_flag = true;
 
 	if (pro_formatter_flag) {
@@ -637,9 +625,8 @@ static int request_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(scsi_bufflen(srb));
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	tmp = (unsigned char *)sense;
 	memcpy(buf, tmp, scsi_bufflen(srb));
@@ -767,7 +754,7 @@ static int mode_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	data_size = 8;
 #ifdef SUPPORT_MAGIC_GATE
 	if ((chip->lun2card[lun] & MS_CARD)) {
-		if (!card || (card == MS_CARD)) {
+		if (!card || card == MS_CARD) {
 			data_size = 108;
 			if (chip->mspro_formatter_enable)
 				pro_formatter_flag = true;
@@ -783,17 +770,16 @@ static int mode_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 #endif
 
 	buf = kmalloc(data_size, GFP_KERNEL);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	page_code = srb->cmnd[2] & 0x3f;
 
-	if ((page_code == 0x3F) || (page_code == 0x1C) ||
-	    (page_code == 0x00) ||
-		(pro_formatter_flag && (page_code == 0x20))) {
+	if (page_code == 0x3F || page_code == 0x1C ||
+	    page_code == 0x00 ||
+		(pro_formatter_flag && page_code == 0x20)) {
 		if (srb->cmnd[0] == MODE_SENSE) {
-			if ((page_code == 0x3F) || (page_code == 0x20)) {
+			if (page_code == 0x3F || page_code == 0x20) {
 				ms_mode_sense(chip, srb->cmnd[0],
 					      lun, buf, data_size);
 			} else {
@@ -808,7 +794,7 @@ static int mode_sense(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 				buf[3] = 0x00;
 			}
 		} else {
-			if ((page_code == 0x3F) || (page_code == 0x20)) {
+			if (page_code == 0x3F || page_code == 0x20) {
 				ms_mode_sense(chip, srb->cmnd[0],
 					      lun, buf, data_size);
 			} else {
@@ -893,7 +879,7 @@ static int read_write(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 #endif
 
-	if ((srb->cmnd[0] == READ_10) || (srb->cmnd[0] == WRITE_10)) {
+	if (srb->cmnd[0] == READ_10 || srb->cmnd[0] == WRITE_10) {
 		start_sec = ((u32)srb->cmnd[2] << 24) |
 			((u32)srb->cmnd[3] << 16) |
 			((u32)srb->cmnd[4] << 8) | ((u32)srb->cmnd[5]);
@@ -920,7 +906,7 @@ static int read_write(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	 * In this situation, start_sec + sec_cnt will overflow, so we
 	 * need to judge start_sec at first
 	 */
-	if ((start_sec > get_card_size(chip, lun)) ||
+	if (start_sec > get_card_size(chip, lun) ||
 	    ((start_sec + sec_cnt) > get_card_size(chip, lun))) {
 		set_sense_type(chip, lun, SENSE_TYPE_MEDIA_LBA_OVER_RANGE);
 		return TRANSPORT_FAILED;
@@ -999,18 +985,17 @@ static int read_format_capacity(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	buf_len = (scsi_bufflen(srb) > 12) ? 0x14 : 12;
 
 	buf = kmalloc(buf_len, GFP_KERNEL);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	buf[i++] = 0;
 	buf[i++] = 0;
 	buf[i++] = 0;
 
 	/* Capacity List Length */
-	if ((buf_len > 12) && chip->mspro_formatter_enable &&
+	if (buf_len > 12 && chip->mspro_formatter_enable &&
 	    (chip->lun2card[lun] & MS_CARD) &&
-	    (!card || (card == MS_CARD))) {
+	    (!card || card == MS_CARD)) {
 		buf[i++] = 0x10;
 		desc_cnt = 2;
 	} else {
@@ -1076,9 +1061,8 @@ static int read_capacity(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = kmalloc(8, GFP_KERNEL);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	card_size = get_card_size(chip, lun);
 	buf[0] = (unsigned char)((card_size - 1) >> 24);
@@ -1116,9 +1100,8 @@ static int read_eeprom(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	len = ((u16)srb->cmnd[4] << 8) | srb->cmnd[5];
 
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	retval = rtsx_force_power_on(chip, SSC_PDCTL);
 	if (retval != STATUS_SUCCESS) {
@@ -1180,9 +1163,8 @@ static int write_eeprom(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb),
 					len);
 		buf = vmalloc(len);
-		if (!buf) {
+		if (!buf)
 			return TRANSPORT_ERROR;
-		}
 
 		rtsx_stor_get_xfer_buf(buf, len, srb);
 		scsi_set_resid(srb, scsi_bufflen(srb) - len);
@@ -1227,9 +1209,8 @@ static int read_mem(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	retval = rtsx_force_power_on(chip, SSC_PDCTL);
 	if (retval != STATUS_SUCCESS) {
@@ -1282,9 +1263,8 @@ static int write_mem(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	rtsx_stor_get_xfer_buf(buf, len, srb);
 	scsi_set_resid(srb, scsi_bufflen(srb) - len);
@@ -1589,7 +1569,7 @@ static int get_dev_status(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 #ifdef SUPPORT_OCP
 	status[8] = 0;
 	if (CHECK_LUN_MODE(chip, SD_MS_2LUN) &&
-	    (chip->lun2card[lun] == MS_CARD)) {
+	    chip->lun2card[lun] == MS_CARD) {
 		oc_now_mask = MS_OC_NOW;
 		oc_ever_mask = MS_OC_EVER;
 	} else {
@@ -1702,41 +1682,35 @@ static int set_chip_mode(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	if (phy_debug_mode) {
 		chip->phy_debug_mode = 1;
 		retval = rtsx_write_register(chip, CDRESUMECTL, 0x77, 0);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_FAILED;
-		}
 
 		rtsx_disable_bus_int(chip);
 
 		retval = rtsx_read_phy_register(chip, 0x1C, &reg);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_FAILED;
-		}
 
 		reg |= 0x0001;
 		retval = rtsx_write_phy_register(chip, 0x1C, reg);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_FAILED;
-		}
 	} else {
 		chip->phy_debug_mode = 0;
 		retval = rtsx_write_register(chip, CDRESUMECTL, 0x77, 0x77);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_FAILED;
-		}
 
 		rtsx_enable_bus_int(chip);
 
 		retval = rtsx_read_phy_register(chip, 0x1C, &reg);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_FAILED;
-		}
 
 		reg &= 0xFFFE;
 		retval = rtsx_write_phy_register(chip, 0x1C, reg);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_FAILED;
-		}
 	}
 
 	return TRANSPORT_GOOD;
@@ -1840,9 +1814,8 @@ static int read_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	if (len) {
 		buf = vmalloc(len);
-		if (!buf) {
+		if (!buf)
 			return TRANSPORT_ERROR;
-		}
 
 		retval = rtsx_force_power_on(chip, SSC_PDCTL);
 		if (retval != STATUS_SUCCESS) {
@@ -1903,9 +1876,8 @@ static int write_phy_register(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 					len);
 
 		buf = vmalloc(len);
-		if (!buf) {
+		if (!buf)
 			return TRANSPORT_ERROR;
-		}
 
 		rtsx_stor_get_xfer_buf(buf, len, srb);
 		scsi_set_resid(srb, scsi_bufflen(srb) - len);
@@ -1999,9 +1971,8 @@ static int read_eeprom2(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	len = ((u16)srb->cmnd[6] << 8) | srb->cmnd[7];
 
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	retval = rtsx_force_power_on(chip, SSC_PDCTL);
 	if (retval != STATUS_SUCCESS) {
@@ -2049,9 +2020,8 @@ static int write_eeprom2(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	rtsx_stor_get_xfer_buf(buf, len, srb);
 	scsi_set_resid(srb, scsi_bufflen(srb) - len);
@@ -2096,9 +2066,8 @@ static int read_efuse(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	len = srb->cmnd[5];
 
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	retval = rtsx_force_power_on(chip, SSC_PDCTL);
 	if (retval != STATUS_SUCCESS) {
@@ -2147,9 +2116,8 @@ static int write_efuse(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (u8)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	rtsx_stor_get_xfer_buf(buf, len, srb);
 	scsi_set_resid(srb, scsi_bufflen(srb) - len);
@@ -2215,29 +2183,25 @@ exit:
 	vfree(buf);
 
 	retval = card_power_off(chip, SPI_CARD);
-	if (retval != STATUS_SUCCESS) {
+	if (retval != STATUS_SUCCESS)
 		return TRANSPORT_ERROR;
-	}
 
 	if (chip->asic_code) {
 		retval = rtsx_write_register(chip, PWR_GATE_CTRL,
 					     LDO3318_PWR_MASK, LDO_OFF);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_ERROR;
-		}
 
 		wait_timeout(600);
 
 		retval = rtsx_write_phy_register(chip, 0x08, val);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_ERROR;
-		}
 
 		retval = rtsx_write_register(chip, PWR_GATE_CTRL,
 					     LDO3318_PWR_MASK, LDO_ON);
-		if (retval != STATUS_SUCCESS) {
+		if (retval != STATUS_SUCCESS)
 			return TRANSPORT_ERROR;
-		}
 	}
 
 	return result;
@@ -2278,9 +2242,8 @@ static int read_cfg_byte(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	retval = rtsx_read_cfg_seq(chip, func, addr, buf, len);
 	if (retval != STATUS_SUCCESS) {
@@ -2335,9 +2298,8 @@ static int write_cfg_byte(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	len = (unsigned short)min_t(unsigned int, scsi_bufflen(srb), len);
 	buf = vmalloc(len);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	rtsx_stor_get_xfer_buf(buf, len, srb);
 	scsi_set_resid(srb, scsi_bufflen(srb) - len);
@@ -2582,7 +2544,7 @@ static int get_card_bus_width(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	card = get_lun_card(chip, lun);
-	if ((card == SD_CARD) || (card == MS_CARD)) {
+	if (card == SD_CARD || card == MS_CARD) {
 		bus_width = chip->card_bus_width[lun];
 	} else {
 		set_sense_type(chip, lun, SENSE_TYPE_MEDIA_UNRECOVER_READ_ERR);
@@ -2657,9 +2619,8 @@ static int spi_vendor_cmd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	rtsx_write_register(chip, CARD_GPIO_DIR, 0x07, gpio_dir);
 
-	if (result != STATUS_SUCCESS) {
+	if (result != STATUS_SUCCESS)
 		return TRANSPORT_FAILED;
-	}
 
 	return TRANSPORT_GOOD;
 }
@@ -2724,7 +2685,7 @@ void led_shine(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	unsigned int lun = SCSI_LUN(srb);
 	u16 sec_cnt;
 
-	if ((srb->cmnd[0] == READ_10) || (srb->cmnd[0] == WRITE_10)) {
+	if (srb->cmnd[0] == READ_10 || srb->cmnd[0] == WRITE_10) {
 		sec_cnt = ((u16)(srb->cmnd[7]) << 8) | srb->cmnd[8];
 	} else if ((srb->cmnd[0] == READ_6) || (srb->cmnd[0] == WRITE_6)) {
 		sec_cnt = srb->cmnd[4];
@@ -2755,9 +2716,9 @@ static int ms_format_cmnd(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		return TRANSPORT_FAILED;
 	}
 
-	if ((srb->cmnd[3] != 0x4D) || (srb->cmnd[4] != 0x47) ||
-	    (srb->cmnd[5] != 0x66) || (srb->cmnd[6] != 0x6D) ||
-		(srb->cmnd[7] != 0x74)) {
+	if (srb->cmnd[3] != 0x4D || srb->cmnd[4] != 0x47 ||
+	    srb->cmnd[5] != 0x66 || srb->cmnd[6] != 0x6D ||
+		srb->cmnd[7] != 0x74) {
 		set_sense_type(chip, lun, SENSE_TYPE_MEDIA_INVALID_CMD_FIELD);
 		return TRANSPORT_FAILED;
 	}
@@ -2825,33 +2786,32 @@ static int get_ms_information(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		return TRANSPORT_FAILED;
 	}
 
-	if ((srb->cmnd[2] != 0xB0) || (srb->cmnd[4] != 0x4D) ||
-	    (srb->cmnd[5] != 0x53) || (srb->cmnd[6] != 0x49) ||
-	    (srb->cmnd[7] != 0x44)) {
+	if (srb->cmnd[2] != 0xB0 || srb->cmnd[4] != 0x4D ||
+	    srb->cmnd[5] != 0x53 || srb->cmnd[6] != 0x49 ||
+	    srb->cmnd[7] != 0x44) {
 		set_sense_type(chip, lun, SENSE_TYPE_MEDIA_INVALID_CMD_FIELD);
 		return TRANSPORT_FAILED;
 	}
 
 	dev_info_id = srb->cmnd[3];
-	if ((CHK_MSXC(ms_card) && (dev_info_id == 0x10)) ||
-	    (!CHK_MSXC(ms_card) && (dev_info_id == 0x13)) ||
+	if ((CHK_MSXC(ms_card) && dev_info_id == 0x10) ||
+	    (!CHK_MSXC(ms_card) && dev_info_id == 0x13) ||
 	    !CHK_MSPRO(ms_card)) {
 		set_sense_type(chip, lun, SENSE_TYPE_MEDIA_INVALID_CMD_FIELD);
 		return TRANSPORT_FAILED;
 	}
 
 	if (dev_info_id == 0x15) {
-		buf_len = 0x3A;
+		buf_len = 0x3C;
 		data_len = 0x3A;
 	} else {
-		buf_len = 0x6A;
+		buf_len = 0x6C;
 		data_len = 0x6A;
 	}
 
 	buf = kmalloc(buf_len, GFP_KERNEL);
-	if (!buf) {
+	if (!buf)
 		return TRANSPORT_ERROR;
-	}
 
 	i = 0;
 	/*  GET Memory Stick Media Information Response Header */
@@ -2886,7 +2846,7 @@ static int get_ms_information(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	buf[i++] = data_len;		/* Data length LSB */
 	/* Valid Bit */
 	buf[i++] = 0x80;
-	if ((dev_info_id == 0x10) || (dev_info_id == 0x13)) {
+	if (dev_info_id == 0x10 || dev_info_id == 0x13) {
 		/* System Information */
 		memcpy(buf + i, ms_card->raw_sys_info, 96);
 	} else {
@@ -2895,11 +2855,7 @@ static int get_ms_information(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	}
 
 	rtsx_stor_set_xfer_buf(buf, buf_len, srb);
-
-	if (dev_info_id == 0x15)
-		scsi_set_resid(srb, scsi_bufflen(srb) - 0x3C);
-	else
-		scsi_set_resid(srb, scsi_bufflen(srb) - 0x6C);
+	scsi_set_resid(srb, scsi_bufflen(srb) - buf_len);
 
 	kfree(buf);
 	return STATUS_SUCCESS;
@@ -3022,12 +2978,11 @@ static int mg_report_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	switch (key_format) {
 	case KF_GET_LOC_EKB:
 		if ((scsi_bufflen(srb) == 0x41C) &&
-		    (srb->cmnd[8] == 0x04) &&
-		    (srb->cmnd[9] == 0x1C)) {
+		    srb->cmnd[8] == 0x04 &&
+		    srb->cmnd[9] == 0x1C) {
 			retval = mg_get_local_EKB(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3038,12 +2993,11 @@ static int mg_report_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	case KF_RSP_CHG:
 		if ((scsi_bufflen(srb) == 0x24) &&
-		    (srb->cmnd[8] == 0x00) &&
-		    (srb->cmnd[9] == 0x24)) {
+		    srb->cmnd[8] == 0x00 &&
+		    srb->cmnd[9] == 0x24) {
 			retval = mg_get_rsp_chg(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3055,16 +3009,15 @@ static int mg_report_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	case KF_GET_ICV:
 		ms_card->mg_entry_num = srb->cmnd[5];
 		if ((scsi_bufflen(srb) == 0x404) &&
-		    (srb->cmnd[8] == 0x04) &&
-		    (srb->cmnd[9] == 0x04) &&
-		    (srb->cmnd[2] == 0x00) &&
-		    (srb->cmnd[3] == 0x00) &&
-		    (srb->cmnd[4] == 0x00) &&
-		    (srb->cmnd[5] < 32)) {
+		    srb->cmnd[8] == 0x04 &&
+		    srb->cmnd[9] == 0x04 &&
+		    srb->cmnd[2] == 0x00 &&
+		    srb->cmnd[3] == 0x00 &&
+		    srb->cmnd[4] == 0x00 &&
+		    srb->cmnd[5] < 32) {
 			retval = mg_get_ICV(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3128,12 +3081,11 @@ static int mg_send_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	switch (key_format) {
 	case KF_SET_LEAF_ID:
 		if ((scsi_bufflen(srb) == 0x0C) &&
-		    (srb->cmnd[8] == 0x00) &&
-		    (srb->cmnd[9] == 0x0C)) {
+		    srb->cmnd[8] == 0x00 &&
+		    srb->cmnd[9] == 0x0C) {
 			retval = mg_set_leaf_id(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3144,12 +3096,11 @@ static int mg_send_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	case KF_CHG_HOST:
 		if ((scsi_bufflen(srb) == 0x0C) &&
-		    (srb->cmnd[8] == 0x00) &&
-		    (srb->cmnd[9] == 0x0C)) {
+		    srb->cmnd[8] == 0x00 &&
+		    srb->cmnd[9] == 0x0C) {
 			retval = mg_chg(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3160,12 +3111,11 @@ static int mg_send_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 
 	case KF_RSP_HOST:
 		if ((scsi_bufflen(srb) == 0x0C) &&
-		    (srb->cmnd[8] == 0x00) &&
-		    (srb->cmnd[9] == 0x0C)) {
+		    srb->cmnd[8] == 0x00 &&
+		    srb->cmnd[9] == 0x0C) {
 			retval = mg_rsp(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3177,16 +3127,15 @@ static int mg_send_key(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 	case KF_SET_ICV:
 		ms_card->mg_entry_num = srb->cmnd[5];
 		if ((scsi_bufflen(srb) == 0x404) &&
-		    (srb->cmnd[8] == 0x04) &&
-		    (srb->cmnd[9] == 0x04) &&
-		    (srb->cmnd[2] == 0x00) &&
-		    (srb->cmnd[3] == 0x00) &&
-		    (srb->cmnd[4] == 0x00) &&
-		    (srb->cmnd[5] < 32)) {
+		    srb->cmnd[8] == 0x04 &&
+		    srb->cmnd[9] == 0x04 &&
+		    srb->cmnd[2] == 0x00 &&
+		    srb->cmnd[3] == 0x00 &&
+		    srb->cmnd[4] == 0x00 &&
+		    srb->cmnd[5] < 32) {
 			retval = mg_set_ICV(srb, chip);
-			if (retval != STATUS_SUCCESS) {
+			if (retval != STATUS_SUCCESS)
 				return TRANSPORT_FAILED;
-			}
 
 		} else {
 			set_sense_type(chip, lun,
@@ -3219,10 +3168,10 @@ int rtsx_scsi_handler(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 		/* Block all SCSI command except for
 		 * REQUEST_SENSE and rs_ppstatus
 		 */
-		if (!((srb->cmnd[0] == VENDOR_CMND) &&
-		      (srb->cmnd[1] == SCSI_APP_CMD) &&
-		      (srb->cmnd[2] == GET_DEV_STATUS)) &&
-		      (srb->cmnd[0] != REQUEST_SENSE)) {
+		if (!(srb->cmnd[0] == VENDOR_CMND &&
+		      srb->cmnd[1] == SCSI_APP_CMD &&
+		      srb->cmnd[2] == GET_DEV_STATUS) &&
+			srb->cmnd[0] != REQUEST_SENSE) {
 			/* Logical Unit Not Ready Format in Progress */
 			set_sense_data(chip, lun, CUR_ERR,
 				       0x02, 0, 0x04, 0x04, 0, 0);
@@ -3232,9 +3181,9 @@ int rtsx_scsi_handler(struct scsi_cmnd *srb, struct rtsx_chip *chip)
 #endif
 
 	if ((get_lun_card(chip, lun) == MS_CARD) &&
-	    (ms_card->format_status == FORMAT_IN_PROGRESS)) {
-		if ((srb->cmnd[0] != REQUEST_SENSE) &&
-		    (srb->cmnd[0] != INQUIRY)) {
+	    ms_card->format_status == FORMAT_IN_PROGRESS) {
+		if (srb->cmnd[0] != REQUEST_SENSE &&
+		    srb->cmnd[0] != INQUIRY) {
 			/* Logical Unit Not Ready Format in Progress */
 			set_sense_data(chip, lun, CUR_ERR, 0x02, 0, 0x04, 0x04,
 				       0, (u16)(ms_card->progress));

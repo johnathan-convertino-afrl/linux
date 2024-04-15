@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Xilinx DRM bridge header
  *
@@ -36,6 +36,7 @@ struct xlnx_bridge_debugfs_file;
  * @get_output_fmts: callback to get supported output formats.
  * @set_timing: callback to set timing in connected video timing controller.
  * @debugfs_file: for debugfs support
+ * @extra_name: name to distinguish the bridges which share the same of_node
  */
 struct xlnx_bridge {
 	struct list_head list;
@@ -53,6 +54,7 @@ struct xlnx_bridge {
 			       const u32 **fmts, u32 *count);
 	int (*set_timing)(struct xlnx_bridge *bridge, struct videomode *vm);
 	struct xlnx_bridge_debugfs_file *debugfs_file;
+	char *extra_name;
 };
 
 #if IS_ENABLED(CONFIG_DRM_XLNX_BRIDGE)
@@ -94,7 +96,7 @@ void xlnx_bridge_unregister(struct xlnx_bridge *bridge);
 
 struct xlnx_bridge_helper;
 
-static inline inline int xlnx_bridge_helper_init(void)
+static inline int xlnx_bridge_helper_init(void)
 {
 	return 0;
 }
@@ -146,8 +148,8 @@ static inline int xlnx_bridge_get_output_fmts(struct xlnx_bridge *bridge,
 	return 0;
 }
 
-static int xlnx_bridge_set_timing(struct xlnx_bridge *bridge,
-				  struct videomode *vm)
+static inline int xlnx_bridge_set_timing(struct xlnx_bridge *bridge,
+					 struct videomode *vm)
 {
 	if (bridge)
 		return -ENODEV;

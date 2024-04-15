@@ -8,6 +8,7 @@
  *          Satish Kumar Nagireddy <satish.nagireddy.nagireddy@xilinx.com>
  */
 
+#include <linux/gpio/consumer.h>
 #include <linux/of.h>
 #include <linux/xilinx-v4l2-events.h>
 
@@ -18,15 +19,16 @@
 #include "xilinx-scenechange.h"
 #include "xilinx-vip.h"
 
-#define XSCD_MAX_WIDTH		3840
-#define XSCD_MAX_HEIGHT		2160
-#define XSCD_MIN_WIDTH		640
-#define XSCD_MIN_HEIGHT		480
+#define XSCD_DEFAULT_WIDTH	3840
+#define XSCD_DEFAULT_HEIGHT	2160
+#define XSCD_MAX_WIDTH		8192
+#define XSCD_MAX_HEIGHT		4320
+#define XSCD_MIN_WIDTH		64
+#define XSCD_MIN_HEIGHT		64
 
 #define XSCD_V_SUBSAMPLING		16
 #define XSCD_BYTE_ALIGN			16
 #define MULTIPLICATION_FACTOR		100
-#define SCENE_CHANGE_THRESHOLD		0.5
 
 #define XSCD_SCENE_CHANGE		1
 #define XSCD_NO_SCENE_CHANGE		0
@@ -36,14 +38,14 @@
  */
 
 static int xscd_enum_mbus_code(struct v4l2_subdev *subdev,
-			       struct v4l2_subdev_pad_config *cfg,
+			       struct v4l2_subdev_state *sd_state,
 			       struct v4l2_subdev_mbus_code_enum *code)
 {
 	return 0;
 }
 
 static int xscd_enum_frame_size(struct v4l2_subdev *subdev,
-				struct v4l2_subdev_pad_config *cfg,
+				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_frame_size_enum *fse)
 {
 	return 0;
@@ -51,12 +53,13 @@ static int xscd_enum_frame_size(struct v4l2_subdev *subdev,
 
 static struct v4l2_mbus_framefmt *
 __xscd_get_pad_format(struct xscd_chan *chan,
-		      struct v4l2_subdev_pad_config *cfg,
+		      struct v4l2_subdev_state *sd_state,
 		      unsigned int pad, u32 which)
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(&chan->subdev, cfg, pad);
+		return v4l2_subdev_get_try_format(&chan->subdev, sd_state,
+						  pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		return &chan->format;
 	default:
@@ -66,28 +69,37 @@ __xscd_get_pad_format(struct xscd_chan *chan,
 }
 
 static int xscd_get_format(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct xscd_chan *chan = to_xscd_chan(subdev);
 
-	fmt->format = *__xscd_get_pad_format(chan, cfg, fmt->pad, fmt->which);
+	fmt->format = *__xscd_get_pad_format(chan, sd_state, fmt->pad,
+					     fmt->which);
 	return 0;
 }
 
 static int xscd_set_format(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct xscd_chan *chan = to_xscd_chan(subdev);
 	struct v4l2_mbus_framefmt *format;
 
-	format = __xscd_get_pad_format(chan, cfg, fmt->pad, fmt->which);
+	format = __xscd_get_pad_format(chan, sd_state, fmt->pad, fmt->which);
 	format->width = clamp_t(unsigned int, fmt->format.width,
 				XSCD_MIN_WIDTH, XSCD_MAX_WIDTH);
 	format->height = clamp_t(unsigned int, fmt->format.height,
 				 XSCD_MIN_HEIGHT, XSCD_MAX_HEIGHT);
 	format->code = fmt->format.code;
+	/*
+	 * If memory based, SCD can support interlaced alternate mode because
+	 * SCD is agnostic to field. If stream based, SCD does not have a fid
+	 * pin so interlaced alternate mode is not supported there.
+	 */
+	if (chan->xscd->memory_based)
+		format->field = fmt->format.field;
+
 	fmt->format = *format;
 
 	return 0;
@@ -175,14 +187,44 @@ static void xscd_chan_configure_params(struct xscd_chan *chan)
 /* -----------------------------------------------------------------------------
  * V4L2 Subdevice Operations
  */
+
+static int xscd_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	int ret = 0;
+	struct xscd_chan *chan = container_of(ctrl->handler, struct xscd_chan,
+					      ctrl_handler);
+
+	switch (ctrl->id) {
+	case V4L2_CID_XILINX_SCD_THRESHOLD:
+		chan->threshold = ctrl->val;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
 static int xscd_s_stream(struct v4l2_subdev *subdev, int enable)
 {
 	struct xscd_chan *chan = to_xscd_chan(subdev);
+	struct xscd_device *xscd = chan->xscd;
 
 	if (enable)
 		xscd_chan_configure_params(chan);
 
 	xscd_dma_enable_channel(&chan->dmachan, enable);
+
+	/*
+	 * Resolution change doesn't work in stream based mode unless
+	 * the device is reset.
+	 */
+	if (!enable && !xscd->memory_based) {
+		gpiod_set_value_cansleep(xscd->rst_gpio, XSCD_RESET_ASSERT);
+		gpiod_set_value_cansleep(xscd->rst_gpio, XSCD_RESET_DEASSERT);
+	}
+
 	return 0;
 }
 
@@ -232,6 +274,23 @@ static int xscd_close(struct v4l2_subdev *subdev, struct v4l2_subdev_fh *fh)
 	return 0;
 }
 
+static const struct v4l2_ctrl_ops xscd_ctrl_ops = {
+	.s_ctrl	= xscd_s_ctrl
+};
+
+static const struct v4l2_ctrl_config xscd_ctrls[] = {
+	{
+		.ops = &xscd_ctrl_ops,
+		.id = V4L2_CID_XILINX_SCD_THRESHOLD,
+		.name = "Threshold Value",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0,
+		.max = 100,
+		.step = 1,
+		.def = 50,
+	}
+};
+
 static const struct v4l2_subdev_core_ops xscd_core_ops = {
 	.subscribe_event = xscd_subscribe_event,
 	.unsubscribe_event = xscd_unsubscribe_event
@@ -270,15 +329,14 @@ static const struct media_entity_operations xscd_media_ops = {
 void xscd_chan_event_notify(struct xscd_chan *chan)
 {
 	u32 *eventdata;
-	u32 sad, scd_threshold;
+	u32 sad;
 
 	sad = xscd_read(chan->iomem, XSCD_SAD_OFFSET);
 	sad = (sad * XSCD_V_SUBSAMPLING * MULTIPLICATION_FACTOR) /
 	       (chan->format.width * chan->format.height);
 	eventdata = (u32 *)&chan->event.u.data;
-	scd_threshold = SCENE_CHANGE_THRESHOLD * MULTIPLICATION_FACTOR;
 
-	if (sad > scd_threshold)
+	if (sad > chan->threshold)
 		eventdata[0] = XSCD_SCENE_CHANGE;
 	else
 		eventdata[0] = XSCD_NO_SCENE_CHANGE;
@@ -302,6 +360,7 @@ int xscd_chan_init(struct xscd_device *xscd, unsigned int chan_id,
 	struct v4l2_subdev *subdev;
 	unsigned int num_pads;
 	int ret;
+	unsigned int i;
 
 	mutex_init(&chan->lock);
 	chan->xscd = xscd;
@@ -322,8 +381,8 @@ int xscd_chan_init(struct xscd_device *xscd, unsigned int chan_id,
 	/* Initialize default format */
 	chan->format.code = MEDIA_BUS_FMT_VYYUYY8_1X24;
 	chan->format.field = V4L2_FIELD_NONE;
-	chan->format.width = XSCD_MAX_WIDTH;
-	chan->format.height = XSCD_MAX_HEIGHT;
+	chan->format.width = XSCD_DEFAULT_WIDTH;
+	chan->format.height = XSCD_DEFAULT_HEIGHT;
 
 	/* Initialize media pads */
 	num_pads = xscd->memory_based ? 1 : 2;
@@ -334,19 +393,72 @@ int xscd_chan_init(struct xscd_device *xscd, unsigned int chan_id,
 
 	ret = media_entity_pads_init(&subdev->entity, num_pads, chan->pads);
 	if (ret < 0)
-		goto error;
+		goto media_init_error;
 
 	subdev->entity.ops = &xscd_media_ops;
+
+	/* Initialize V4L2 Control Handler */
+	v4l2_ctrl_handler_init(&chan->ctrl_handler, ARRAY_SIZE(xscd_ctrls));
+
+	for (i = 0; i < ARRAY_SIZE(xscd_ctrls); i++) {
+		struct v4l2_ctrl *ctrl;
+
+		dev_dbg(chan->xscd->dev, "%d ctrl = 0x%x\n", i,
+			xscd_ctrls[i].id);
+		ctrl = v4l2_ctrl_new_custom(&chan->ctrl_handler, &xscd_ctrls[i],
+					    NULL);
+		if (!ctrl) {
+			dev_err(chan->xscd->dev, "Failed for %s ctrl\n",
+				xscd_ctrls[i].name);
+			goto ctrl_handler_error;
+		}
+	}
+
+	if (chan->ctrl_handler.error) {
+		dev_err(chan->xscd->dev, "failed to add controls\n");
+		ret = chan->ctrl_handler.error;
+		goto ctrl_handler_error;
+	}
+
+	subdev->ctrl_handler = &chan->ctrl_handler;
+
+	ret = v4l2_ctrl_handler_setup(&chan->ctrl_handler);
+	if (ret < 0) {
+		dev_err(chan->xscd->dev, "failed to set controls\n");
+		goto ctrl_handler_error;
+	}
+
 	ret = v4l2_async_register_subdev(subdev);
 	if (ret < 0) {
 		dev_err(chan->xscd->dev, "failed to register subdev\n");
-		goto error;
+		goto ctrl_handler_error;
 	}
 
 	dev_info(chan->xscd->dev, "Scene change detection channel found!\n");
 	return 0;
 
-error:
+ctrl_handler_error:
+	v4l2_ctrl_handler_free(&chan->ctrl_handler);
+media_init_error:
 	media_entity_cleanup(&subdev->entity);
+	mutex_destroy(&chan->lock);
 	return ret;
+}
+
+/**
+ * xscd_chan_cleanup - Clean up the V4L2 subdev for a channel
+ * @xscd: Pointer to the SCD device structure
+ * @chan_id: Channel id
+ * @node: device node
+ */
+void xscd_chan_cleanup(struct xscd_device *xscd, unsigned int chan_id,
+		       struct device_node *node)
+{
+	struct xscd_chan *chan = &xscd->chans[chan_id];
+	struct v4l2_subdev *subdev = &chan->subdev;
+
+	v4l2_async_unregister_subdev(subdev);
+	v4l2_ctrl_handler_free(&chan->ctrl_handler);
+	media_entity_cleanup(&subdev->entity);
+	mutex_destroy(&chan->lock);
 }

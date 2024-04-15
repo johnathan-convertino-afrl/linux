@@ -53,13 +53,6 @@ properties:
   clocks:
     maxItems: 1
 
-  clock-names:
-    oneOf:
-      - const: sync
-      - const: direct-sync
-      - const: pulse-sync
-      - const: scaled-sync
-
   reset-gpios:
     description:
       Must be the device tree identifier of the RESET pin. If specified,
@@ -67,14 +60,16 @@ properties:
       it should be marked GPIO_ACTIVE_LOW.
     maxItems: 1
 
-  adi,scaled-output-hz:
+  adi,sync-mode:
     description:
-      This property must be present if the clock mode is scaled-sync through
-      clock-names property. In this mode, the input clock can have a range
-      of 1Hz to 128HZ which must be scaled to originate an allowable sample
-      rate. This property specifies that rate.
-    minimum: 1900
-    maximum: 2100
+      Configures the device SYNC pin. The following modes are supported
+      0 - output_sync
+      1 - direct_sync
+      2 - scaled_sync
+      3 - pulse_sync
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 0
+    maximum: 3
 
 required:
   - compatible
@@ -83,32 +78,36 @@ required:
   - spi-cpha
   - spi-cpol
 
-if:
-  properties:
-    compatible:
-      contains:
-        enum:
-          - adi,adis16500
-          - adi,adis16505-1
-          - adi,adis16505-2
-          - adi,adis16505-3
-          - adi,adis16507-1
-          - adi,adis16507-2
-          - adi,adis16507-3
+allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            enum:
+              - adi,adis16500
+              - adi,adis16505-1
+              - adi,adis16505-2
+              - adi,adis16505-3
+              - adi,adis16507-1
+              - adi,adis16507-2
+              - adi,adis16507-3
 
-then:
-  properties:
-    clock-names:
-      oneOf:
-        - const: sync
-        - const: direct-sync
-        - const: scaled-sync
+    then:
+      properties:
+        adi,sync-mode:
+          minimum: 0
+          maximum: 2
 
-    adi,burst32-enable:
-      description:
-        Enable burst32 mode. In this mode, a burst reading contains calibrated
-        gyroscope and accelerometer data in 32-bit format.
-      type: boolean
+  - if:
+      properties:
+        adi,sync-mode:
+          enum: [1, 2, 3]
+
+    then:
+      dependencies:
+        adi,sync-mode: [ clocks ]
+
+additionalProperties: false
 
 examples:
   - |

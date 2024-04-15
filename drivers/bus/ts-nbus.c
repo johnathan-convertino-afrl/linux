@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * NBUS driver for TS-4600 based boards
  *
  * Copyright (c) 2016 - Savoir-faire Linux
  * Author: Sebastien Bourdelin <sebastien.bourdelin@savoirfairelinux.com>
- *
- * This file is licensed under the terms of the GNU General Public
- * License version 2. This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  *
  * This driver implements a GPIOs bit-banged bus, called the NBUS by Technologic
  * Systems. It is used to communicate with the peripherals in the FPGA on the
@@ -110,13 +107,12 @@ static void ts_nbus_set_direction(struct ts_nbus *ts_nbus, int direction)
  */
 static void ts_nbus_reset_bus(struct ts_nbus *ts_nbus)
 {
-	int i;
-	int values[8];
+	DECLARE_BITMAP(values, 8);
 
-	for (i = 0; i < 8; i++)
-		values[i] = 0;
+	values[0] = 0;
 
-	gpiod_set_array_value_cansleep(8, ts_nbus->data->desc, values);
+	gpiod_set_array_value_cansleep(8, ts_nbus->data->desc,
+				       ts_nbus->data->info, values);
 	gpiod_set_value_cansleep(ts_nbus->csn, 0);
 	gpiod_set_value_cansleep(ts_nbus->strobe, 0);
 	gpiod_set_value_cansleep(ts_nbus->ale, 0);
@@ -157,16 +153,11 @@ static int ts_nbus_read_byte(struct ts_nbus *ts_nbus, u8 *val)
 static void ts_nbus_write_byte(struct ts_nbus *ts_nbus, u8 byte)
 {
 	struct gpio_descs *gpios = ts_nbus->data;
-	int i;
-	int values[8];
+	DECLARE_BITMAP(values, 8);
 
-	for (i = 0; i < 8; i++)
-		if (byte & BIT(i))
-			values[i] = 1;
-		else
-			values[i] = 0;
+	values[0] = byte;
 
-	gpiod_set_array_value_cansleep(8, gpios->desc, values);
+	gpiod_set_array_value_cansleep(8, gpios->desc, gpios->info, values);
 }
 
 /*

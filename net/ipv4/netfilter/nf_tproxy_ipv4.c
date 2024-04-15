@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2007-2008 BalaBit IT Ltd.
  * Author: Krisztian Kovacs
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #include <net/netfilter/nf_tproxy.h>
@@ -53,6 +49,7 @@ EXPORT_SYMBOL_GPL(nf_tproxy_handle_time_wait4);
 
 __be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr)
 {
+	const struct in_ifaddr *ifa;
 	struct in_device *indev;
 	__be32 laddr;
 
@@ -61,10 +58,14 @@ __be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr)
 
 	laddr = 0;
 	indev = __in_dev_get_rcu(skb->dev);
-	for_primary_ifa(indev) {
+
+	in_dev_for_each_ifa_rcu(ifa, indev) {
+		if (ifa->ifa_flags & IFA_F_SECONDARY)
+			continue;
+
 		laddr = ifa->ifa_local;
 		break;
-	} endfor_ifa(indev);
+	}
 
 	return laddr ? laddr : daddr;
 }
@@ -78,6 +79,7 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 		      const struct net_device *in,
 		      const enum nf_tproxy_lookup_t lookup_type)
 {
+	struct inet_hashinfo *hinfo = net->ipv4.tcp_death_row.hashinfo;
 	struct sock *sk;
 
 	switch (protocol) {
@@ -91,12 +93,10 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 
 		switch (lookup_type) {
 		case NF_TPROXY_LOOKUP_LISTENER:
-			sk = inet_lookup_listener(net, &tcp_hashinfo, skb,
-						    ip_hdrlen(skb) +
-						      __tcp_hdrlen(hp),
-						    saddr, sport,
-						    daddr, dport,
-						    in->ifindex, 0);
+			sk = inet_lookup_listener(net, hinfo, skb,
+						  ip_hdrlen(skb) + __tcp_hdrlen(hp),
+						  saddr, sport, daddr, dport,
+						  in->ifindex, 0);
 
 			if (sk && !refcount_inc_not_zero(&sk->sk_refcnt))
 				sk = NULL;
@@ -107,9 +107,8 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 			 */
 			break;
 		case NF_TPROXY_LOOKUP_ESTABLISHED:
-			sk = inet_lookup_established(net, &tcp_hashinfo,
-						    saddr, sport, daddr, dport,
-						    in->ifindex);
+			sk = inet_lookup_established(net, hinfo, saddr, sport,
+						     daddr, dport, in->ifindex);
 			break;
 		default:
 			BUG();

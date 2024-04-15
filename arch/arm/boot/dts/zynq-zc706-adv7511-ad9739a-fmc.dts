@@ -19,11 +19,6 @@
 		#size-cells = <0>;
 		#address-cells = <1>;
 		reg = <6>;
-
-		eeprom@50 {
-			compatible = "at24,24c02";
-			reg = <0x50>;
-		};
 	};
 };
 
@@ -50,7 +45,7 @@
 &fpga_axi {
 	tx_dma: tx-dmac@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -69,7 +64,7 @@
 		};
 	};
 
-	axi_ad9739a_core: axi-ad9739a-hpc@74204000 {
+	axi_ad9739a_core: axi-ad9739a-lpc@74204000 {
 		compatible = "adi,axi-ad9739a-8.00.b";
 		reg = < 0x74204000 0x4000 >;
 		dmas = <&tx_dma 0>;

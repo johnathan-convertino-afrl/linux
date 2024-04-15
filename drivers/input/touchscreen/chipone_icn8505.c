@@ -288,7 +288,7 @@ static int icn8505_upload_fw(struct icn8505_data *icn8505)
 	 * we may need it at resume. Having loaded it once will make the
 	 * firmware class code cache it at suspend/resume.
 	 */
-	error = request_firmware(&fw, icn8505->firmware_name, dev);
+	error = firmware_request_platform(&fw, icn8505->firmware_name, dev);
 	if (error) {
 		dev_err(dev, "Firmware request error %d\n", error);
 		return error;
@@ -364,32 +364,20 @@ static irqreturn_t icn8505_irq(int irq, void *dev_id)
 
 static int icn8505_probe_acpi(struct icn8505_data *icn8505, struct device *dev)
 {
-	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	const char *subsys = "unknown";
-	struct acpi_device *adev;
-	union acpi_object *obj;
-	acpi_status status;
+	const char *subsys;
+	int error;
 
-	adev = ACPI_COMPANION(dev);
-	if (!adev)
-		return -ENODEV;
-
-	status = acpi_evaluate_object(adev->handle, "_SUB", NULL, &buffer);
-	if (ACPI_SUCCESS(status)) {
-		obj = buffer.pointer;
-		if (obj->type == ACPI_TYPE_STRING)
-			subsys = obj->string.pointer;
-		else
-			dev_warn(dev, "Warning ACPI _SUB did not return a string\n");
-	} else {
-		dev_warn(dev, "Warning ACPI _SUB failed: %#x\n", status);
-		buffer.pointer = NULL;
-	}
+	subsys = acpi_get_subsystem_id(ACPI_HANDLE(dev));
+	error = PTR_ERR_OR_ZERO(subsys);
+	if (error == -ENODATA)
+		subsys = "unknown";
+	else if (error)
+		return error;
 
 	snprintf(icn8505->firmware_name, sizeof(icn8505->firmware_name),
 		 "chipone/icn8505-%s.fw", subsys);
 
-	kfree(buffer.pointer);
+	kfree_const(subsys);
 	return 0;
 }
 

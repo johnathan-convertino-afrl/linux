@@ -4,6 +4,7 @@
 #include <linux/semaphore.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/of.h>
 #include <asm/rtas.h>
 
 #include "cxl.h"
@@ -92,8 +93,8 @@ static int update_property(struct device_node *dn, const char *name,
 
 	val = (u32 *)new_prop->value;
 	rc = cxl_update_properties(dn, new_prop);
-	pr_devel("%s: update property (%s, length: %i, value: %#x)\n",
-		  dn->name, name, vd, be32_to_cpu(*val));
+	pr_devel("%pOFn: update property (%s, length: %i, value: %#x)\n",
+		  dn, name, vd, be32_to_cpu(*val));
 
 	if (rc) {
 		kfree(new_prop->name);
@@ -175,7 +176,7 @@ static int update_devicetree(struct cxl *adapter, s32 scope)
 	struct update_nodes_workarea *unwa;
 	u32 action, node_count;
 	int token, rc, i;
-	__be32 *data, drc_index, phandle;
+	__be32 *data, phandle;
 	char *buf;
 
 	token = rtas_token("ibm,update-nodes");
@@ -213,7 +214,7 @@ static int update_devicetree(struct cxl *adapter, s32 scope)
 					break;
 				case OPCODE_ADD:
 					/* nothing to do, just move pointer */
-					drc_index = *data++;
+					data++;
 					break;
 				}
 			}
@@ -473,12 +474,6 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return -EINVAL;
 }
 
-static long device_compat_ioctl(struct file *file, unsigned int cmd,
-				unsigned long arg)
-{
-	return device_ioctl(file, cmd, arg);
-}
-
 static int device_close(struct inode *inode, struct file *file)
 {
 	struct cxl *adapter = file->private_data;
@@ -514,7 +509,7 @@ static const struct file_operations fops = {
 	.owner		= THIS_MODULE,
 	.open		= device_open,
 	.unlocked_ioctl	= device_ioctl,
-	.compat_ioctl	= device_compat_ioctl,
+	.compat_ioctl	= compat_ptr_ioctl,
 	.release	= device_close,
 };
 

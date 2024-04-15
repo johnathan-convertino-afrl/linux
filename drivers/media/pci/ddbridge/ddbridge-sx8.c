@@ -5,15 +5,6 @@
  * Copyright (C) 2018 Digital Devices GmbH
  *                    Marcus Metzler <mocm@metzlerbros.de>
  *                    Ralph Metzler <rjkm@metzlerbros.de>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 only, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
  */
 
 #include "ddbridge.h"
@@ -398,9 +389,7 @@ static int set_parameters(struct dvb_frontend *fe)
 		}
 		stat = start(fe, 3, mask, ts_config);
 	} else {
-		u32 flags = (iq_mode == 2) ? 1 : 0;
-
-		stat = start_iq(fe, flags, 4, ts_config);
+		stat = start_iq(fe, 0, 4, ts_config);
 	}
 	if (!stat) {
 		state->started = 1;

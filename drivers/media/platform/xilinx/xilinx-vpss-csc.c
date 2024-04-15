@@ -1,11 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Xilinx VPSS Color Space Converter
  *
  * Copyright (C) 2017 Xilinx, Inc.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/device.h>
@@ -310,16 +308,6 @@ static void xcsc_write_coeff(struct xcsc_dev *xcsc)
 	xcsc_write_rgb_offset(xcsc);
 }
 
-static void xcsc_set_v4l2_ctrl_defaults(struct xcsc_dev *xcsc)
-{
-	unsigned int i;
-
-	mutex_lock(xcsc->ctrl_handler.lock);
-	for (i = 0; i < XCSC_COLOR_CTRL_COUNT; i++)
-		xcsc->custom_ctrls[i]->cur.val = XCSC_COLOR_CTRL_DEFAULT;
-	mutex_unlock(xcsc->ctrl_handler.lock);
-}
-
 static void xcsc_set_control_defaults(struct xcsc_dev *xcsc)
 {
 	/* These are VPSS CSC IP specific defaults */
@@ -539,17 +527,25 @@ static inline struct xcsc_dev *to_csc(struct v4l2_subdev *subdev)
 
 static struct v4l2_mbus_framefmt *
 __xcsc_get_pad_format(struct xcsc_dev *xcsc,
-		      struct v4l2_subdev_pad_config *cfg,
+		      struct v4l2_subdev_state *sd_state,
 		      unsigned int pad, u32 which)
 {
+	struct v4l2_mbus_framefmt *format;
+
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(&xcsc->xvip.subdev, cfg, pad);
+		format = v4l2_subdev_get_try_format(&xcsc->xvip.subdev,
+						    sd_state, pad);
+		break;
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return &xcsc->formats[pad];
+		format = &xcsc->formats[pad];
+		break;
 	default:
-		return NULL;
+		format = NULL;
+		break;
 	}
+
+	return format;
 }
 
 static void
@@ -612,6 +608,10 @@ static void xcsc_set_brightness(struct xcsc_dev *xcsc)
 	xcsc->brightness_active = xcsc->brightness;
 	xcsc_correct_coeff(xcsc, xcsc->shadow_coeff);
 	xcsc_write_coeff(xcsc);
+#ifdef DEBUG
+	xcsc_print_k_hw(xcsc);
+	xcsc_print_coeff(xcsc);
+#endif
 }
 
 static void xcsc_set_contrast(struct xcsc_dev *xcsc)
@@ -633,6 +633,10 @@ static void xcsc_set_contrast(struct xcsc_dev *xcsc)
 	xcsc->contrast_active = xcsc->contrast;
 	xcsc_correct_coeff(xcsc, xcsc->shadow_coeff);
 	xcsc_write_coeff(xcsc);
+#ifdef DEBUG
+	xcsc_print_k_hw(xcsc);
+	xcsc_print_coeff(xcsc);
+#endif
 }
 
 static void xcsc_set_red_gain(struct xcsc_dev *xcsc)
@@ -656,6 +660,10 @@ static void xcsc_set_red_gain(struct xcsc_dev *xcsc)
 		xcsc_correct_coeff(xcsc, xcsc->shadow_coeff);
 		xcsc_write_coeff(xcsc);
 	}
+#ifdef DEBUG
+	xcsc_print_k_hw(xcsc);
+	xcsc_print_coeff(xcsc);
+#endif
 }
 
 static void xcsc_set_green_gain(struct xcsc_dev *xcsc)
@@ -679,6 +687,10 @@ static void xcsc_set_green_gain(struct xcsc_dev *xcsc)
 		xcsc_correct_coeff(xcsc, xcsc->shadow_coeff);
 		xcsc_write_coeff(xcsc);
 	}
+#ifdef DEBUG
+	xcsc_print_k_hw(xcsc);
+	xcsc_print_coeff(xcsc);
+#endif
 }
 
 static void xcsc_set_blue_gain(struct xcsc_dev *xcsc)
@@ -702,6 +714,10 @@ static void xcsc_set_blue_gain(struct xcsc_dev *xcsc)
 		xcsc_correct_coeff(xcsc, xcsc->shadow_coeff);
 		xcsc_write_coeff(xcsc);
 	}
+#ifdef DEBUG
+	xcsc_print_k_hw(xcsc);
+	xcsc_print_coeff(xcsc);
+#endif
 }
 
 static void xcsc_set_size(struct xcsc_dev *xcsc)
@@ -726,8 +742,24 @@ static int xcsc_s_stream(struct v4l2_subdev *subdev, int enable)
 		/* Reset the Global IP Reset through PS GPIO */
 		gpiod_set_value_cansleep(xcsc->rst_gpio, XCSC_RESET_ASSERT);
 		gpiod_set_value_cansleep(xcsc->rst_gpio, XCSC_RESET_DEASSERT);
+
+		/* Reset the active controls */
+		xcsc->brightness_active	= 120;
+		xcsc->contrast_active = 0;
+		xcsc->red_gain_active = 120;
+		xcsc->blue_gain_active = 120;
+		xcsc->green_gain_active = 120;
+		xcsc_copy_coeff(xcsc->shadow_coeff, rgb_unity_matrix);
+
 		return 0;
 	}
+	/* Set the controls */
+	xcsc_set_brightness(xcsc);
+	xcsc_set_contrast(xcsc);
+	xcsc_set_red_gain(xcsc);
+	xcsc_set_green_gain(xcsc);
+	xcsc_set_blue_gain(xcsc);
+
 	xcsc_write(xcsc, XV_CSC_INVIDEOFORMAT, xcsc->cft_in);
 	xcsc_write(xcsc, XV_CSC_OUTVIDEOFORMAT, xcsc->cft_out);
 	xcsc_write(xcsc, XV_CSC_CLIPMAX, xcsc->clip_max);
@@ -756,27 +788,38 @@ static const struct v4l2_subdev_video_ops xcsc_video_ops = {
 };
 
 static int xcsc_get_format(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct xcsc_dev *xcsc = to_csc(subdev);
+	struct v4l2_mbus_framefmt *format;
 
-	fmt->format = *__xcsc_get_pad_format(xcsc, cfg, fmt->pad, fmt->which);
+	format = __xcsc_get_pad_format(xcsc, sd_state, fmt->pad, fmt->which);
+	if (!format)
+		return -EINVAL;
+
+	fmt->format = *format;
 	return 0;
 }
 
 static int xcsc_set_format(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct xcsc_dev *xcsc = to_csc(subdev);
 	struct v4l2_mbus_framefmt *__format;
 	struct v4l2_mbus_framefmt *__propagate;
 
-	__format = __xcsc_get_pad_format(xcsc, cfg, fmt->pad, fmt->which);
+	__format = __xcsc_get_pad_format(xcsc, sd_state, fmt->pad, fmt->which);
+	if (!__format)
+		return -EINVAL;
+
 	/* Propagate to Source Pad */
-	__propagate = __xcsc_get_pad_format(xcsc, cfg,
+	__propagate = __xcsc_get_pad_format(xcsc, sd_state,
 					    XVIP_PAD_SOURCE, fmt->which);
+	if (!__propagate)
+		return -EINVAL;
+
 	*__format = fmt->format;
 
 	__format->width = clamp_t(unsigned int, fmt->format.width,
@@ -787,6 +830,7 @@ static int xcsc_set_format(struct v4l2_subdev *subdev,
 	switch (__format->code) {
 	case MEDIA_BUS_FMT_VUY8_1X24:
 	case MEDIA_BUS_FMT_RBG888_1X24:
+	case MEDIA_BUS_FMT_RBG101010_1X30:
 	case MEDIA_BUS_FMT_UYVY8_1X16:
 	case MEDIA_BUS_FMT_VYYUYY8_1X24:
 	case MEDIA_BUS_FMT_VYYUYY10_4X20:
@@ -805,8 +849,6 @@ static int xcsc_set_format(struct v4l2_subdev *subdev,
 
 	fmt->format = *__format;
 	xcsc_update_formats(xcsc);
-	xcsc_set_control_defaults(xcsc);
-	xcsc_set_v4l2_ctrl_defaults(xcsc);
 	dev_info(xcsc->xvip.dev, "VPSS CSC color controls reset to defaults");
 	return 0;
 }
@@ -832,29 +874,20 @@ static int xcsc_s_ctrl(struct v4l2_ctrl *ctrl)
 	switch (ctrl->id) {
 	case V4L2_CID_XILINX_CSC_BRIGHTNESS:
 		xcsc->brightness = (2 * ctrl->val) + 20;
-		xcsc_set_brightness(xcsc);
 		break;
 	case V4L2_CID_XILINX_CSC_CONTRAST:
 		xcsc->contrast = (4 * ctrl->val) - 200;
-		xcsc_set_contrast(xcsc);
 		break;
 	case V4L2_CID_XILINX_CSC_RED_GAIN:
 		xcsc->red_gain =  (2 * ctrl->val) + 20;
-		xcsc_set_red_gain(xcsc);
 		break;
 	case V4L2_CID_XILINX_CSC_BLUE_GAIN:
 		xcsc->blue_gain =  (2 * ctrl->val) + 20;
-		xcsc_set_blue_gain(xcsc);
 		break;
 	case V4L2_CID_XILINX_CSC_GREEN_GAIN:
 		xcsc->green_gain =  (2 * ctrl->val) + 20;
-		xcsc_set_green_gain(xcsc);
 		break;
 	}
-#ifdef DEBUG
-	xcsc_print_k_hw(xcsc);
-	xcsc_print_coeff(xcsc);
-#endif
 	return 0;
 }
 
@@ -932,10 +965,11 @@ static int xcsc_open(struct v4l2_subdev *subdev,
 	struct v4l2_mbus_framefmt *format;
 
 	/* Initialize with default formats */
-	format = v4l2_subdev_get_try_format(subdev, fh->pad, XVIP_PAD_SINK);
+	format = v4l2_subdev_get_try_format(subdev, fh->state, XVIP_PAD_SINK);
 	*format = xcsc->default_formats[XVIP_PAD_SINK];
 
-	format = v4l2_subdev_get_try_format(subdev, fh->pad, XVIP_PAD_SOURCE);
+	format = v4l2_subdev_get_try_format(subdev, fh->state,
+					    XVIP_PAD_SOURCE);
 	*format = xcsc->default_formats[XVIP_PAD_SOURCE];
 
 	return 0;
@@ -964,7 +998,7 @@ static int xcsc_parse_of(struct xcsc_dev *xcsc)
 	struct device_node *ports, *port;
 	int rval;
 	u32 port_id = 0;
-	u32 video_width[2];
+	u32 video_width[2] = {0};
 
 	rval = of_property_read_u32(node, "xlnx,max-height", &xcsc->max_height);
 	if (rval < 0) {
@@ -1027,8 +1061,10 @@ static int xcsc_parse_of(struct xcsc_dev *xcsc)
 	}
 	switch (video_width[0]) {
 	case XVIDC_BPC_8:
+		xcsc->color_depth = XVIDC_BPC_8;
+		break;
 	case XVIDC_BPC_10:
-		xcsc->color_depth = video_width[0];
+		xcsc->color_depth = XVIDC_BPC_10;
 		break;
 	default:
 		dev_err(dev, "Unsupported color depth %d", video_width[0]);

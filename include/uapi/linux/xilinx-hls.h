@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+
 #ifndef __UAPI_XILINX_HLS_H__
 #define __UAPI_XILINX_HLS_H__
 
@@ -12,7 +14,7 @@ struct xilinx_axi_hls_register {
 
 struct xilinx_axi_hls_registers {
 	__u32 num_regs;
-	struct xilinx_axi_hls_register __user *regs;
+	struct xilinx_axi_hls_register *regs;
 };
 
 #define XILINX_AXI_HLS_READ	_IOWR('V', BASE_VIDIOC_PRIVATE+0, struct xilinx_axi_hls_registers)

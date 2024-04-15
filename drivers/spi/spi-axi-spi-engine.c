@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * SPI-Engine SPI controller driver
  * Copyright 2015 Analog Devices Inc.
  *  Author: Lars-Peter Clausen <lars@metafoo.de>
- *
- * Licensed under the GPL-2.
  */
 
 #include <linux/clk.h>
@@ -210,19 +209,24 @@ static void spi_engine_gen_xfer(struct spi_engine_program *p, bool dry,
 }
 
 static void spi_engine_gen_sleep(struct spi_engine_program *p, bool dry,
-	struct spi_engine *spi_engine, unsigned int clk_div, unsigned int delay)
+	struct spi_engine *spi_engine, struct spi_delay spi_delay,
+	unsigned int clk_div, struct spi_transfer *xfer)
 {
 	unsigned int spi_clk = clk_get_rate(spi_engine->ref_clk);
-	unsigned int t;
+	unsigned long long t;
+	int delay;
 
-	if (delay == 0)
+	delay = spi_delay_to_ns(&xfer->delay, xfer);
+	if (delay < 0)
 		return;
 
-	t = DIV_ROUND_UP(delay * spi_clk, (clk_div + 1) * 2);
-	/* spi_clk is in Hz while delay is usec, a division is required */
-	t /= 1000000;
+	t = DIV_ROUND_UP_ULL((unsigned long long)(delay) * spi_clk,
+			     (clk_div + 1) * 2);
+
+	/* spi_clk is in Hz while delay is nsec, a division is required */
+	t = DIV_ROUND_CLOSEST_ULL(t, 1000000000);
 	while (t) {
-		unsigned int n = min(t, 256U);
+		unsigned int n = min_t(unsigned int, t, 256U);
 
 		spi_engine_program_add_cmd(p, dry, SPI_ENGINE_CMD_SLEEP(n - 1));
 		t -= n;
@@ -235,7 +239,7 @@ static void spi_engine_gen_cs(struct spi_engine_program *p, bool dry,
 	unsigned int mask = 0xff;
 
 	if (assert)
-		mask ^= BIT(spi->chip_select);
+		mask ^= BIT(spi_get_chipselect(spi, 0));
 
 	spi_engine_program_add_cmd(p, dry, SPI_ENGINE_CMD_ASSERT(1, mask));
 }
@@ -279,8 +283,8 @@ static int spi_engine_compile_message(struct spi_engine *spi_engine,
 
 		spi_engine_update_xfer_len(spi_engine, xfer);
 		spi_engine_gen_xfer(p, dry, xfer);
-		spi_engine_gen_sleep(p, dry, spi_engine, clk_div,
-			xfer->delay_usecs);
+		spi_engine_gen_sleep(p, dry, spi_engine, xfer->delay, clk_div,
+				     xfer);
 
 		cs_change = xfer->cs_change;
 		if (list_is_last(&xfer->transfer_list, &msg->transfers))
@@ -288,6 +292,10 @@ static int spi_engine_compile_message(struct spi_engine *spi_engine,
 
 		if (cs_change)
 			spi_engine_gen_cs(p, dry, spi, false);
+
+		if (xfer->word_delay.value)
+			spi_engine_gen_sleep(p, dry, spi_engine,
+					     xfer->word_delay, clk_div, xfer);
 	}
 
 	return 0;
@@ -327,7 +335,7 @@ int spi_engine_offload_load_msg(struct spi_device *spi,
 	struct spi_transfer *xfer;
 	void __iomem *cmd_addr;
 	void __iomem *sdo_addr;
-	const uint8_t *buf;
+	const uint32_t *buf;
 	unsigned int i, j;
 	size_t size;
 
@@ -521,6 +529,12 @@ static void spi_engine_complete_message(struct spi_master *master, int status)
 	msg->status = status;
 	msg->actual_length = msg->frame_length;
 	spi_engine->msg = NULL;
+	spi_engine->tx_xfer = NULL;
+	spi_engine->tx_buf = NULL;
+	spi_engine->tx_length = 0;
+	spi_engine->rx_xfer = NULL;
+	spi_engine->rx_buf = NULL;
+	spi_engine->rx_length = 0;
 	spi_finalize_current_message(master);
 }
 
@@ -650,7 +664,6 @@ static int spi_engine_probe(struct platform_device *pdev)
 	struct spi_engine *spi_engine;
 	struct spi_master *master;
 	unsigned int version;
-	struct resource *res;
 	int irq;
 	int ret;
 
@@ -691,8 +704,7 @@ static int spi_engine_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_clk_disable;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	spi_engine->base = devm_ioremap_resource(&pdev->dev, res);
+	spi_engine->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(spi_engine->base)) {
 		ret = PTR_ERR(spi_engine->base);
 		goto err_ref_clk_disable;
@@ -719,6 +731,7 @@ static int spi_engine_probe(struct platform_device *pdev)
 	master->dev.of_node = pdev->dev.of_node;
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_3WIRE;
 	master->max_speed_hz = clk_get_rate(spi_engine->ref_clk) / 2;
+	master->bits_per_word_mask = GENMASK(31, 0);
 	master->transfer_one_message = spi_engine_transfer_one_message;
 	master->num_chipselect = 8;
 

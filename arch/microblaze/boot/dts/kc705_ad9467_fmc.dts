@@ -16,6 +16,15 @@
 #define fmc_i2c fmc_lpc_iic
 #define fmc_spi axi_spi
 
+/ {
+	model = "Analog Devices AD9467-FMC @Xilinx/kc705";
+};
+
+/* ad9467_fmc_kc705: updated 2019_R2 */
+&axi_intc {
+	xlnx,kind-of-intr = <0xffffe5de>;
+};
+
 &amba_pl {
 	axi_ad9467: cf-ad9467-core-lpc@44a00000 {
 		compatible = "adi,axi-adc-10.0.a";
@@ -33,19 +42,6 @@
 		interrupt-parent = <&axi_intc>;
 		interrupts = <12 2>;
 		clocks = <&clk_bus_0>;
-
-		adi,channels {
-			#size-cells = <0>;
-			#address-cells = <1>;
-
-			dma-channel@0 {
-				reg = <0>;
-				adi,source-bus-width = <16>;
-				adi,source-bus-type = <2>;
-				adi,destination-bus-width = <64>;
-				adi,destination-bus-type = <0>;
-			};
-		};
 	};
 };
 

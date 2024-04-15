@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/arch/arm/mach-omap1/board-h3.c
  *
@@ -8,10 +9,6 @@
  * Copyright (C) 2001 RidgeRun, Inc.
  * Author: RidgeRun, Inc.
  *         Greg Lonnon (glonnon@ridgerun.com) or info@ridgerun.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 #include <linux/gpio.h>
 #include <linux/types.h>
@@ -23,7 +20,7 @@
 #include <linux/workqueue.h>
 #include <linux/i2c.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/rawnand.h>
+#include <linux/mtd/platnand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
 #include <linux/input.h>
@@ -32,6 +29,8 @@
 #include <linux/smc91x.h>
 #include <linux/omapfb.h>
 #include <linux/platform_data/gpio-omap.h>
+#include <linux/platform_data/keypad-omap.h>
+#include <linux/omap-dma.h>
 #include <linux/leds.h>
 
 #include <asm/setup.h>
@@ -40,16 +39,12 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <mach/mux.h>
-#include <mach/tc.h>
-#include <linux/platform_data/keypad-omap.h>
-#include <linux/omap-dma.h>
+#include "tc.h"
+#include "mux.h"
 #include "flash.h"
-
-#include <mach/hardware.h>
-#include <mach/irqs.h>
-#include <mach/usb.h>
-
+#include "hardware.h"
+#include "irqs.h"
+#include "usb.h"
 #include "common.h"
 #include "board-h3.h"
 
@@ -185,7 +180,7 @@ static struct mtd_partition nand_partitions[] = {
 
 #define H3_NAND_RB_GPIO_PIN	10
 
-static int nand_dev_ready(struct mtd_info *mtd)
+static int nand_dev_ready(struct nand_chip *chip)
 {
 	return gpio_get_value(H3_NAND_RB_GPIO_PIN);
 }

@@ -10,10 +10,21 @@
  * Copyright (C) 2016-2019 Analog Devices Inc.
  */
 /dts-v1/;
+
 #include "vc707.dtsi"
+#include <dt-bindings/jesd204/adxcvr.h>
 
 #define fmc_i2c fmc1_hpc_iic
 #define fmc_spi axi_spi
+
+/ {
+	model = "Analog Devices AD6676EVB @Xilinx/vc707";
+};
+
+/* ad6676evb_vc707: updated 2019_R2 */
+&axi_intc {
+	xlnx,kind-of-intr = <0xffffc5d0>;
+};
 
 / {
 	clocks {
@@ -41,19 +52,6 @@
 		reg = <0x7c420000 0x10000>;
 		#dma-cells = <1>;
 		clocks = <&clk_bus_0>;
-
-		adi,channels {
-			#size-cells = <0>;
-			#address-cells = <1>;
-
-			dma-channel@0 {
-				reg = <0>;
-				adi,source-bus-width = <64>;
-				adi,source-bus-type = <2>;
-				adi,destination-bus-width = <64>;
-				adi,destination-bus-type = <0>;
-			};
-		};
 	};
 	axi_ad6676_jesd: axi-jesd204-rx@44aa0000 {
 		compatible = "adi,axi-jesd204-rx-1.0";
@@ -82,9 +80,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "adc_gt_clk", "rx_out_clk";
 
-		adi,sys-clk-select = <0>;
-		adi,out-clk-select = <4>;
-		adi,use-cpll-enable;
+		adi,sys-clk-select = <XCVR_CPLL>;
+		adi,out-clk-select = <XCVR_REFCLK_DIV2>;
 	};
 };
 

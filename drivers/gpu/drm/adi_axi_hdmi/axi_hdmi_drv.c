@@ -17,13 +17,14 @@
 #include <linux/of_graph.h>
 #include <linux/clk.h>
 
-#include <drm/drmP.h>
 #include <drm/drm.h>
-#include <drm/drm_crtc_helper.h>
-#include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_crtc_helper.h>
+#include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
+#include <drm/drm_gem_dma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_probe_helper.h>
 
 #include "axi_hdmi_drv.h"
 
@@ -84,27 +85,24 @@ static int axi_hdmi_init(struct drm_driver *ddrv, struct device *dev)
 
 	drm_mode_config_reset(ddev);
 
-	ret = drm_fb_cma_fbdev_init(ddev, 32, 1);
-	if (ret) {
-		DRM_ERROR("failed to initialize drm fbdev: %d\n", ret);
-		goto err_crtc;
-	}
-
 	/* init kms poll for handling hpd */
 	drm_kms_helper_poll_init(ddev);
 
-	return drm_dev_register(ddev, 0);
+	ret = drm_dev_register(ddev, 0);
+	if (ret)
+		goto err_crtc;
 
+	drm_fbdev_generic_setup(ddev, 32);
+
+	return 0;
 err_crtc:
 	drm_mode_config_cleanup(ddev);
-	drm_dev_unref(ddev);
 
 	return ret;
 }
 
 static void axi_hdmi_unload(struct drm_device *dev)
 {
-	drm_fb_cma_fbdev_fini(dev);
 	drm_kms_helper_poll_fini(dev);
 	drm_mode_config_cleanup(dev);
 }
@@ -112,7 +110,7 @@ static void axi_hdmi_unload(struct drm_device *dev)
 static const struct file_operations axi_hdmi_driver_fops = {
 	.owner		= THIS_MODULE,
 	.open		= drm_open,
-	.mmap		= drm_gem_cma_mmap,
+	.mmap		= drm_gem_mmap,
 	.poll		= drm_poll,
 	.read		= drm_read,
 	.unlocked_ioctl	= drm_ioctl,
@@ -123,10 +121,11 @@ static struct drm_driver axi_hdmi_driver = {
 	.driver_features	= DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
 	.unload			= axi_hdmi_unload,
 	.lastclose		= drm_fb_helper_lastclose,
-	.gem_free_object	= drm_gem_cma_free_object,
-	.gem_vm_ops		= &drm_gem_cma_vm_ops,
-	.dumb_create		= drm_gem_cma_dumb_create,
-	.gem_prime_vmap		= drm_gem_cma_prime_vmap,
+	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
+	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
+	.gem_prime_import	= drm_gem_prime_import,
+	.gem_prime_import_sg_table = drm_gem_dma_prime_import_sg_table,
+	.dumb_create		= drm_gem_dma_dumb_create,
 	.fops			= &axi_hdmi_driver_fops,
 	.name			= DRIVER_NAME,
 	.desc			= DRIVER_DESC,
@@ -209,6 +208,8 @@ static int axi_hdmi_platform_probe(struct platform_device *pdev)
 static int axi_hdmi_platform_remove(struct platform_device *pdev)
 {
 	struct axi_hdmi_private *private = platform_get_drvdata(pdev);
+
+	drm_atomic_helper_shutdown(private->drm_dev);
 
 	drm_put_dev(private->drm_dev);
 	dma_release_channel(private->dma);

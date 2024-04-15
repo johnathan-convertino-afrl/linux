@@ -2,6 +2,7 @@
 
 #include "zynq-zc706.dtsi"
 #include "zynq-zc706-adv7511.dtsi"
+#include <dt-bindings/jesd204/adxcvr.h>
 
 &i2c_mux {
 	i2c@5 { /* HPC IIC */
@@ -14,11 +15,6 @@
 			reg = <0x50>;
 		};
 
-		eeprom@54 {
-			compatible = "at24,24c02";
-			reg = <0x54>;
-		};
-
 		ad7291@2f {
 			compatible = "adi,ad7291";
 			reg = <0x2f>;
@@ -29,7 +25,7 @@
 &fpga_axi {
 	rx_dma: rx-dmac@7c400000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c400000 0x10000>;
+		reg = <0x7c400000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -51,7 +47,7 @@
 
 	tx_dma: tx-dmac@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -84,7 +80,7 @@
 
 		interrupts = <0 54 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&clkc 16>, <&tx_adxcvr 1>, <&tx_adxcvr 0>;
+		clocks = <&clkc 15>, <&tx_adxcvr 1>, <&tx_adxcvr 0>;
 		clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
 		adi,octets-per-frame = <1>;
@@ -111,7 +107,7 @@
 
 		interrupts = <0 55 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&clkc 16>, <&rx_adxcvr 1>, <&rx_adxcvr 0>;
+		clocks = <&clkc 15>, <&rx_adxcvr 1>, <&rx_adxcvr 0>;
 		clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
 		adi,octets-per-frame = <1>;
@@ -131,9 +127,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "adc_gt_clk", "rx_out_clk";
 
-		adi,sys-clk-select = <0>;
-		adi,out-clk-select = <2>;
-		adi,use-cpll-enable;
+		adi,sys-clk-select = <XCVR_CPLL>;
+		adi,out-clk-select = <XCVR_OUTCLK_PMA>;
 		//adi,use-lpm-enable;
 	};
 
@@ -146,8 +141,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "dac_gt_clk", "tx_out_clk";
 
-		adi,sys-clk-select = <3>;
-		adi,out-clk-select = <2>;
+		adi,sys-clk-select = <XCVR_QPLL>;
+		adi,out-clk-select = <XCVR_OUTCLK_PMA>;
 	};
 };
 

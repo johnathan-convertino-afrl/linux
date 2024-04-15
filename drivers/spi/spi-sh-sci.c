@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * SH SCI SPI interface
  *
@@ -6,11 +7,6 @@
  * Based on S3C24XX GPIO based SPI driver, which is:
  *   Copyright (c) 2006 Ben Dooks
  *   Copyright (c) 2006 Simtec Electronics
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #include <linux/kernel.h>
@@ -112,7 +108,7 @@ static void sh_sci_spi_chipselect(struct spi_device *dev, int value)
 	struct sh_sci_spi *sp = spi_master_get_devdata(dev->master);
 
 	if (sp->info->chip_select)
-		(sp->info->chip_select)(sp->info, dev->chip_select, value);
+		(sp->info->chip_select)(sp->info, spi_get_chipselect(dev, 0), value);
 }
 
 static int sh_sci_spi_probe(struct platform_device *dev)

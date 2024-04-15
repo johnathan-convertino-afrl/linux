@@ -16,21 +16,24 @@
  * GNU General Public License for more details.
  */
 
-#include <drm/drmP.h>
+#include <drm/drm_drv.h>
+#include <drm/drm_vblank.h>
+#include <drm/drm_fourcc.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_of.h>
+#include <drm/drm_probe_helper.h>
 
 #include <linux/component.h>
 #include <linux/device.h>
 #include <linux/dma-buf.h>
+#include <linux/dma-resv.h>
 #include <linux/module.h>
 #include <linux/of_graph.h>
 #include <linux/platform_device.h>
-#include <linux/reservation.h>
 
 #include "xlnx_bridge.h"
 #include "xlnx_crtc.h"
@@ -44,6 +47,8 @@
 #define DRIVER_MAJOR	1
 #define DRIVER_MINOR	0
 
+#define MAX_CRTC	3
+
 static uint xlnx_fbdev_vres = 2;
 module_param_named(fbdev_vres, xlnx_fbdev_vres, uint, 0444);
 MODULE_PARM_DESC(fbdev_vres,
@@ -56,7 +61,7 @@ MODULE_PARM_DESC(fbdev_vres,
  * @fb: DRM fb helper
  * @master: logical master device for pipeline
  * @suspend_state: atomic state for suspend / resume
- * @is_master: A flag to indicate if this instance is fake master
+ * @master_count: Counter to track number of fake master instances
  */
 struct xlnx_drm {
 	struct drm_device *drm;
@@ -64,7 +69,7 @@ struct xlnx_drm {
 	struct drm_fb_helper *fb;
 	struct platform_device *master;
 	struct drm_atomic_state *suspend_state;
-	bool is_master;
+	u32 master_count;
 };
 
 /**
@@ -144,7 +149,7 @@ static int xlnx_drm_open(struct drm_device *dev, struct drm_file *file)
 	if (!(drm_is_primary_client(file) && !dev->master) &&
 	    !file->is_master && capable(CAP_SYS_ADMIN)) {
 		file->is_master = 1;
-		xlnx_drm->is_master = true;
+		xlnx_drm->master_count++;
 	}
 
 	return 0;
@@ -157,8 +162,8 @@ static int xlnx_drm_release(struct inode *inode, struct file *filp)
 	struct drm_device *drm = minor->dev;
 	struct xlnx_drm *xlnx_drm = drm->dev_private;
 
-	if (xlnx_drm->is_master) {
-		xlnx_drm->is_master = false;
+	if (file->is_master && xlnx_drm->master_count) {
+		xlnx_drm->master_count--;
 		file->is_master = 0;
 	}
 
@@ -178,7 +183,7 @@ static const struct file_operations xlnx_fops = {
 	.open		= drm_open,
 	.release	= xlnx_drm_release,
 	.unlocked_ioctl	= drm_ioctl,
-	.mmap		= drm_gem_cma_mmap,
+	.mmap		= drm_gem_mmap,
 	.poll		= drm_poll,
 	.read		= drm_read,
 #ifdef CONFIG_COMPAT
@@ -189,23 +194,11 @@ static const struct file_operations xlnx_fops = {
 
 static struct drm_driver xlnx_drm_driver = {
 	.driver_features		= DRIVER_MODESET | DRIVER_GEM |
-					  DRIVER_ATOMIC | DRIVER_PRIME,
+					  DRIVER_ATOMIC,
 	.open				= xlnx_drm_open,
 	.lastclose			= xlnx_lastclose,
 
-	.prime_handle_to_fd		= drm_gem_prime_handle_to_fd,
-	.prime_fd_to_handle		= drm_gem_prime_fd_to_handle,
-	.gem_prime_export		= drm_gem_prime_export,
-	.gem_prime_import		= drm_gem_prime_import,
-	.gem_prime_get_sg_table		= drm_gem_cma_prime_get_sg_table,
-	.gem_prime_import_sg_table	= drm_gem_cma_prime_import_sg_table,
-	.gem_prime_vmap			= drm_gem_cma_prime_vmap,
-	.gem_prime_vunmap		= drm_gem_cma_prime_vunmap,
-	.gem_prime_mmap			= drm_gem_cma_prime_mmap,
-	.gem_free_object		= drm_gem_cma_free_object,
-	.gem_vm_ops			= &drm_gem_cma_vm_ops,
-	.dumb_create			= xlnx_gem_cma_dumb_create,
-	.dumb_destroy			= drm_gem_dumb_destroy,
+	DRM_GEM_DMA_DRIVER_OPS_VMAP_WITH_DUMB_CREATE(xlnx_gem_cma_dumb_create),
 
 	.fops				= &xlnx_fops,
 
@@ -239,13 +232,12 @@ static int xlnx_bind(struct device *dev)
 	drm_mode_config_init(drm);
 	drm->mode_config.funcs = &xlnx_mode_config_funcs;
 
-	ret = drm_vblank_init(drm, 1);
+	ret = drm_vblank_init(drm, MAX_CRTC);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to initialize vblank\n");
 		goto err_xlnx_drm;
 	}
 
-	drm->irq_enabled = 1;
 	drm->dev_private = xlnx_drm;
 	xlnx_drm->drm = drm;
 	xlnx_drm->master = master;
@@ -299,7 +291,7 @@ err_crtc:
 err_xlnx_drm:
 	drm_mode_config_cleanup(drm);
 err_drm:
-	drm_dev_unref(drm);
+	drm_dev_put(drm);
 	return ret;
 }
 
@@ -309,13 +301,15 @@ static void xlnx_unbind(struct device *dev)
 	struct drm_device *drm = xlnx_drm->drm;
 
 	drm_dev_unregister(drm);
-	if (xlnx_drm->fb)
-		xlnx_fb_fini(xlnx_drm->fb);
 	component_unbind_all(&xlnx_drm->master->dev, drm);
+	if (xlnx_drm->fb) {
+		xlnx_fb_fini(xlnx_drm->fb);
+		xlnx_drm->fb = NULL;
+	}
 	xlnx_crtc_helper_fini(drm, xlnx_drm->crtc);
 	drm_kms_helper_poll_fini(drm);
 	drm_mode_config_cleanup(drm);
-	drm_dev_unref(drm);
+	drm_dev_put(drm);
 }
 
 static const struct component_master_ops xlnx_master_ops = {

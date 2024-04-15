@@ -9,6 +9,7 @@
 #ifndef IIO_TRX_AD9371_H_
 #define IIO_TRX_AD9371_H_
 
+#include <linux/mutex.h>
 #include "mykonos/t_mykonos.h"
 
 #define MIN_GAIN_mdB		0
@@ -36,9 +37,14 @@ enum debugfs_cmd {
 	DBGFS_LOOPBACK_TX_RX,
 	DBGFS_LOOPBACK_TX_OBS,
 	DBGFS_BIST_PRBS_RX,
+	DBGFS_BIST_PRBS_ERR_RX,
 	DBGFS_BIST_PRBS_OBS,
+	DBGFS_BIST_PRBS_ERR_OBS,
+	DBGFS_BIST_PRBS_TX,
+	DBGFS_BIST_PRBS_ERR_TX,
 	DBGFS_BIST_TONE,
 	DBGFS_MONITOR_OUT,
+	DBGFS_PLLS_STATUS,
 };
 
 
@@ -197,8 +203,12 @@ struct ad9371_rf_phy {
 	struct bin_attribute 	bin;
 	struct bin_attribute 	bin_gt;
 	struct iio_dev 		*indio_dev;
+	struct jesd204_dev	*jdev;
+	/* protect against device accesses */
+	struct mutex		lock;
 
 	struct gpio_desc	*reset_gpio;
+	struct gpio_desc	*test_gpio;
 	struct gpio_desc	*sysref_req_gpio;
 	struct gain_table_info  gt_info[LOOPBACK_GT + 1];
 
@@ -224,9 +234,9 @@ struct ad9371_rf_phy {
 	u32			cal_mask;
 	u32			rf_bandwith[3];
 	bool			is_initialized;
+	bool			large_freq_step_cal_en;
 };
 
-int ad9371_hdl_loopback(struct ad9371_rf_phy *phy, bool enable);
 int ad9371_register_axi_converter(struct ad9371_rf_phy *phy);
 struct ad9371_rf_phy* ad9371_spi_to_phy(struct spi_device *spi);
 int ad9371_spi_read(struct spi_device *spi, u32 reg);

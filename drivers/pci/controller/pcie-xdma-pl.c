@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PCIe host controller driver for Xilinx XDMA PCIe Bridge
  *
  * Copyright (C) 2017 Xilinx, Inc. All rights reserved.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License 2 as published by
- * the Free Software Foundation.
  */
 
 #include <linux/interrupt.h>
@@ -21,6 +18,8 @@
 #include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/irqchip/chained_irq.h>
+
+#include "../pci.h"
 
 /* Register definitions */
 #define XILINX_PCIE_REG_VSEC		0x0000012c
@@ -43,8 +42,6 @@
 
 /* Interrupt registers definitions */
 #define XILINX_PCIE_INTR_LINK_DOWN	BIT(0)
-#define XILINX_PCIE_INTR_ECRC_ERR	BIT(1)
-#define XILINX_PCIE_INTR_STR_ERR	BIT(2)
 #define XILINX_PCIE_INTR_HOT_RESET	BIT(3)
 #define XILINX_PCIE_INTR_CFG_TIMEOUT	BIT(8)
 #define XILINX_PCIE_INTR_CORRECTABLE	BIT(9)
@@ -60,8 +57,7 @@
 #define XILINX_PCIE_INTR_SLV_ILLBUR	BIT(25)
 #define XILINX_PCIE_INTR_MST_DECERR	BIT(26)
 #define XILINX_PCIE_INTR_MST_SLVERR	BIT(27)
-#define XILINX_PCIE_INTR_MST_ERRP	BIT(28)
-#define XILINX_PCIE_IMR_ALL_MASK	0x1FF30FED
+#define XILINX_PCIE_IMR_ALL_MASK	0x0FF30FE9
 #define XILINX_PCIE_IDR_ALL_MASK	0xFFFFFFFF
 #define XILINX_PCIE_IDRN_MASK           GENMASK(19, 16)
 
@@ -102,9 +98,16 @@
 #define XILINX_NUM_MSI_IRQS		64
 #define INTX_NUM                        4
 
+#define DMA_BRIDGE_BASE_OFF		0xCD8
+
 enum msi_mode {
 	MSI_DECD_MODE = 1,
 	MSI_FIFO_MODE,
+};
+
+enum xdma_config {
+	XDMA_ZYNQMP_PL = 1,
+	XDMA_VERSAL_PL,
 };
 
 struct xilinx_msi {
@@ -128,6 +131,7 @@ struct xilinx_msi {
  * @msi: MSI information
  * @irq_misc: Legacy and error interrupt number
  * @msi_mode: MSI mode
+ * @xdma_config: XDMA IP configuration
  */
 struct xilinx_pcie_port {
 	void __iomem *reg_base;
@@ -139,16 +143,23 @@ struct xilinx_pcie_port {
 	struct xilinx_msi msi;
 	int irq_misc;
 	u8 msi_mode;
+	u8 xdma_config;
 };
 
 static inline u32 pcie_read(struct xilinx_pcie_port *port, u32 reg)
 {
-	return readl(port->reg_base + reg);
+	if (port->xdma_config == XDMA_ZYNQMP_PL)
+		return readl(port->reg_base + reg);
+	else
+		return readl(port->reg_base + reg + DMA_BRIDGE_BASE_OFF);
 }
 
 static inline void pcie_write(struct xilinx_pcie_port *port, u32 val, u32 reg)
 {
-	writel(val, port->reg_base + reg);
+	if (port->xdma_config == XDMA_ZYNQMP_PL)
+		writel(val, port->reg_base + reg);
+	else
+		writel(val, port->reg_base + reg + DMA_BRIDGE_BASE_OFF);
 }
 
 static inline bool xilinx_pcie_link_is_up(struct xilinx_pcie_port *port)
@@ -332,12 +343,6 @@ static irqreturn_t xilinx_pcie_intr_handler(int irq, void *data)
 	if (status & XILINX_PCIE_INTR_LINK_DOWN)
 		dev_warn(port->dev, "Link Down\n");
 
-	if (status & XILINX_PCIE_INTR_ECRC_ERR)
-		dev_warn(port->dev, "ECRC failed\n");
-
-	if (status & XILINX_PCIE_INTR_STR_ERR)
-		dev_warn(port->dev, "Streaming error\n");
-
 	if (status & XILINX_PCIE_INTR_HOT_RESET)
 		dev_info(port->dev, "Hot reset\n");
 
@@ -421,9 +426,6 @@ static irqreturn_t xilinx_pcie_intr_handler(int irq, void *data)
 	if (status & XILINX_PCIE_INTR_MST_SLVERR)
 		dev_warn(port->dev, "Master slave error\n");
 
-	if (status & XILINX_PCIE_INTR_MST_ERRP)
-		dev_warn(port->dev, "Master error poison\n");
-
 error:
 	/* Clear the Interrupt Decode register */
 	pcie_write(port, status, XILINX_PCIE_REG_IDR);
@@ -433,10 +435,10 @@ error:
 
 static struct irq_chip xilinx_msi_irq_chip = {
 	.name = "xilinx_pcie:msi",
-	.irq_enable = unmask_msi_irq,
-	.irq_disable = mask_msi_irq,
-	.irq_mask = mask_msi_irq,
-	.irq_unmask = unmask_msi_irq,
+	.irq_enable = pci_msi_unmask_irq,
+	.irq_disable = pci_msi_mask_irq,
+	.irq_mask = pci_msi_mask_irq,
+	.irq_unmask = pci_msi_unmask_irq,
 };
 
 static struct msi_domain_info xilinx_msi_domain_info = {
@@ -474,26 +476,16 @@ static int xilinx_irq_domain_alloc(struct irq_domain *domain, unsigned int virq,
 {
 	struct xilinx_pcie_port *pcie = domain->host_data;
 	struct xilinx_msi *msi = &pcie->msi;
-	int bit, tst_bit;
+	int bit;
 	int i;
 
 	mutex_lock(&msi->lock);
-	bit = bitmap_find_next_zero_area(msi->bitmap, XILINX_NUM_MSI_IRQS, 0,
-					 nr_irqs, 0);
-	if (bit >= XILINX_NUM_MSI_IRQS) {
+	bit = bitmap_find_free_region(msi->bitmap, XILINX_NUM_MSI_IRQS,
+				      get_count_order(nr_irqs));
+	if (bit < 0) {
 		mutex_unlock(&msi->lock);
 		return -ENOSPC;
 	}
-
-	if ((bit % nr_irqs) == 0) {
-		bit = bit;
-	} else if (nr_irqs > 1) {
-		tst_bit = bit & ((1 << ilog2(nr_irqs)) - 1);
-		bit = bit - tst_bit;
-		bit = bit + nr_irqs;
-	}
-
-	bitmap_set(msi->bitmap, bit, nr_irqs);
 
 	for (i = 0; i < nr_irqs; i++) {
 		irq_domain_set_info(domain, virq + i, bit + i, &xilinx_irq_chip,
@@ -512,7 +504,8 @@ static void xilinx_irq_domain_free(struct irq_domain *domain, unsigned int virq,
 	struct xilinx_msi *msi = &pcie->msi;
 
 	mutex_lock(&msi->lock);
-	bitmap_clear(msi->bitmap, data->hwirq, nr_irqs);
+	bitmap_release_region(msi->bitmap, data->hwirq,
+			      get_count_order(nr_irqs));
 	mutex_unlock(&msi->lock);
 }
 
@@ -617,6 +610,59 @@ static void xilinx_pcie_init_port(struct xilinx_pcie_port *port)
 	pcie_write(port, pcie_read(port, XILINX_PCIE_REG_RPSC) |
 			 XILINX_PCIE_REG_RPSC_BEN,
 		   XILINX_PCIE_REG_RPSC);
+
+}
+
+static int xilinx_request_misc_irq(struct xilinx_pcie_port *port)
+{
+	struct device *dev = port->dev;
+	struct platform_device *pdev = to_platform_device(dev);
+	int err;
+
+	port->irq_misc = platform_get_irq_byname(pdev, "misc");
+	if (port->irq_misc <= 0) {
+		dev_err(dev, "Unable to find misc IRQ line\n");
+		return port->irq_misc;
+	}
+	err = devm_request_irq(dev, port->irq_misc,
+			       xilinx_pcie_intr_handler,
+			       IRQF_SHARED | IRQF_NO_THREAD,
+			       "xilinx-pcie", port);
+	if (err) {
+		dev_err(dev, "unable to request misc IRQ line %d\n",
+			port->irq_misc);
+		return err;
+	}
+
+	return 0;
+}
+
+static int xilinx_request_msi_irq(struct xilinx_pcie_port *port)
+{
+	struct device *dev = port->dev;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	port->msi.irq_msi0 = platform_get_irq_byname(pdev, "msi0");
+	if (port->msi.irq_msi0 <= 0) {
+		dev_err(dev, "Unable to find msi0 IRQ line\n");
+		return port->msi.irq_msi0;
+	}
+
+	irq_set_chained_handler_and_data(port->msi.irq_msi0,
+					 xilinx_pcie_msi_handler_low,
+					 port);
+
+	port->msi.irq_msi1 = platform_get_irq_byname(pdev, "msi1");
+	if (port->msi.irq_msi1 <= 0) {
+		dev_err(dev, "Unable to find msi1 IRQ line\n");
+		return port->msi.irq_msi1;
+	}
+
+	irq_set_chained_handler_and_data(port->msi.irq_msi1,
+					 xilinx_pcie_msi_handler_high,
+					 port);
+
+	return 0;
 }
 
 /**
@@ -629,89 +675,76 @@ static int xilinx_pcie_parse_dt(struct xilinx_pcie_port *port)
 {
 	struct device *dev = port->dev;
 	struct device_node *node = dev->of_node;
-	struct platform_device *pdev = to_platform_device(dev);
 	struct resource regs;
 	const char *type;
 	int err, mode_val, val;
 
-	type = of_get_property(node, "device_type", NULL);
-	if (!type || strcmp(type, "pci")) {
-		dev_err(dev, "invalid \"device_type\" %s\n", type);
-		return -EINVAL;
-	}
+	if (of_device_is_compatible(node, "xlnx,xdma-host-3.00"))
+		port->xdma_config = XDMA_ZYNQMP_PL;
+	else if (of_device_is_compatible(node, "xlnx,pcie-dma-versal-2.0"))
+		port->xdma_config = XDMA_VERSAL_PL;
 
-	err = of_address_to_resource(node, 0, &regs);
-	if (err) {
-		dev_err(dev, "missing \"reg\" property\n");
-		return err;
-	}
-
-	port->reg_base = devm_ioremap_resource(dev, &regs);
-	if (IS_ERR(port->reg_base))
-		return PTR_ERR(port->reg_base);
-
-	val = pcie_read(port, XILINX_PCIE_REG_BIR);
-	val = (val >> XILINX_PCIE_FIFO_SHIFT) & MSI_DECD_MODE;
-	mode_val = pcie_read(port, XILINX_PCIE_REG_VSEC) &
-			XILINX_PCIE_VSEC_REV_MASK;
-	mode_val = mode_val >> XILINX_PCIE_VSEC_REV_SHIFT;
-	if (mode_val && !val) {
-		port->msi_mode = MSI_DECD_MODE;
-		dev_info(dev, "Using MSI Decode mode\n");
-	} else {
-		port->msi_mode = MSI_FIFO_MODE;
-		dev_info(dev, "Using MSI FIFO mode\n");
-	}
-
-	if (port->msi_mode == MSI_DECD_MODE) {
-		port->irq_misc = platform_get_irq_byname(pdev, "misc");
-		if (port->irq_misc <= 0) {
-			dev_err(dev, "Unable to find misc IRQ line\n");
-			return port->irq_misc;
+	if (port->xdma_config == XDMA_ZYNQMP_PL ||
+	    port->xdma_config == XDMA_VERSAL_PL) {
+		type = of_get_property(node, "device_type", NULL);
+		if (!type || strcmp(type, "pci")) {
+			dev_err(dev, "invalid \"device_type\" %s\n", type);
+			return -EINVAL;
 		}
-		err = devm_request_irq(dev, port->irq_misc,
-				       xilinx_pcie_intr_handler,
-				       IRQF_SHARED | IRQF_NO_THREAD,
-				       "xilinx-pcie", port);
+
+		err = of_address_to_resource(node, 0, &regs);
 		if (err) {
-			dev_err(dev, "unable to request misc IRQ line %d\n",
-				port->irq);
+			dev_err(dev, "missing \"reg\" property\n");
 			return err;
 		}
 
-		port->msi.irq_msi0 = platform_get_irq_byname(pdev, "msi0");
-		if (port->msi.irq_msi0 <= 0) {
-			dev_err(dev, "Unable to find msi0 IRQ line\n");
-			return port->msi.irq_msi0;
+		port->reg_base = devm_ioremap_resource(dev, &regs);
+		if (IS_ERR(port->reg_base))
+			return PTR_ERR(port->reg_base);
+
+		if (port->xdma_config == XDMA_ZYNQMP_PL) {
+			val = pcie_read(port, XILINX_PCIE_REG_BIR);
+			val = (val >> XILINX_PCIE_FIFO_SHIFT) & MSI_DECD_MODE;
+			mode_val = pcie_read(port, XILINX_PCIE_REG_VSEC) &
+					XILINX_PCIE_VSEC_REV_MASK;
+			mode_val = mode_val >> XILINX_PCIE_VSEC_REV_SHIFT;
+			if (mode_val && !val) {
+				port->msi_mode = MSI_DECD_MODE;
+				dev_info(dev, "Using MSI Decode mode\n");
+			} else {
+				port->msi_mode = MSI_FIFO_MODE;
+				dev_info(dev, "Using MSI FIFO mode\n");
+			}
 		}
 
-		irq_set_chained_handler_and_data(port->msi.irq_msi0,
-						 xilinx_pcie_msi_handler_low,
-						 port);
+		if (port->xdma_config == XDMA_VERSAL_PL)
+			port->msi_mode = MSI_DECD_MODE;
 
-		port->msi.irq_msi1 = platform_get_irq_byname(pdev, "msi1");
-		if (port->msi.irq_msi1 <= 0) {
-			dev_err(dev, "Unable to find msi1 IRQ line\n");
-			return port->msi.irq_msi1;
-		}
+		if (port->msi_mode == MSI_DECD_MODE) {
+			err = xilinx_request_misc_irq(port);
+			if (err)
+				return err;
 
-		irq_set_chained_handler_and_data(port->msi.irq_msi1,
-						 xilinx_pcie_msi_handler_high,
-						 port);
+			err = xilinx_request_msi_irq(port);
+			if (err)
+				return err;
 
-	} else if (port->msi_mode == MSI_FIFO_MODE) {
-		port->irq = irq_of_parse_and_map(node, 0);
-		if (!port->irq) {
-			dev_err(dev, "Unable to find IRQ line\n");
-			return -ENXIO;
-		}
+		} else if (port->msi_mode == MSI_FIFO_MODE) {
+			port->irq = irq_of_parse_and_map(node, 0);
+			if (!port->irq) {
+				dev_err(dev, "Unable to find IRQ line\n");
+				return -ENXIO;
+			}
 
-		err = devm_request_irq(dev, port->irq, xilinx_pcie_intr_handler,
-				       IRQF_SHARED | IRQF_NO_THREAD,
-				       "xilinx-pcie", port);
-		if (err) {
-			dev_err(dev, "unable to request irq %d\n", port->irq);
-			return err;
+			err = devm_request_irq(dev, port->irq,
+					       xilinx_pcie_intr_handler,
+					       IRQF_SHARED | IRQF_NO_THREAD,
+					       "xilinx-pcie", port);
+			if (err) {
+				dev_err(dev, "unable to request irq %d\n",
+					port->irq);
+				return err;
+			}
 		}
 	}
 
@@ -732,7 +765,6 @@ static int xilinx_pcie_probe(struct platform_device *pdev)
 	struct pci_bus *child;
 	struct pci_host_bridge *bridge;
 	int err;
-	resource_size_t iobase = 0;
 	LIST_HEAD(res);
 
 	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*port));
@@ -757,17 +789,6 @@ static int xilinx_pcie_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	err = of_pci_get_host_bridge_resources(dev->of_node, 0, 0xff, &res,
-					       &iobase);
-	if (err) {
-		dev_err(dev, "Getting bridge resources failed\n");
-		return err;
-	}
-
-	err = devm_request_pci_bus_resources(dev, &res);
-	if (err)
-		goto error;
-
 	list_splice_init(&res, &bridge->windows);
 	bridge->dev.parent = dev;
 	bridge->sysdata = port;
@@ -778,7 +799,7 @@ static int xilinx_pcie_probe(struct platform_device *pdev)
 
 	err = pci_scan_root_bus_bridge(bridge);
 	if (err)
-		goto error;
+		return err;
 
 	bus = bridge->bus;
 
@@ -787,20 +808,17 @@ static int xilinx_pcie_probe(struct platform_device *pdev)
 		pcie_bus_configure_settings(child);
 	pci_bus_add_devices(bus);
 	return 0;
-
-error:
-	pci_free_resource_list(&res);
-	return err;
 }
 
 static const struct of_device_id xilinx_pcie_of_match[] = {
 	{ .compatible = "xlnx,xdma-host-3.00", },
+	{ .compatible = "xlnx,pcie-dma-versal-2.0", },
 	{}
 };
 
 static struct platform_driver xilinx_pcie_driver = {
 	.driver = {
-		.name = "xilinx-pcie",
+		.name = "xilinx-xdma-pcie",
 		.of_match_table = xilinx_pcie_of_match,
 		.suppress_bind_attrs = true,
 	},

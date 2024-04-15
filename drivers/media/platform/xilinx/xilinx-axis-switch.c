@@ -126,25 +126,34 @@ static int xvsw_s_stream(struct v4l2_subdev *subdev, int enable)
 
 static struct v4l2_mbus_framefmt *
 xvsw_get_pad_format(struct xvswitch_device *xvsw,
-		    struct v4l2_subdev_pad_config *cfg,
+		    struct v4l2_subdev_state *sd_state,
 		    unsigned int pad, u32 which)
 {
+	struct v4l2_mbus_framefmt *get_fmt;
+
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(&xvsw->subdev, cfg, pad);
+		get_fmt = v4l2_subdev_get_try_format(&xvsw->subdev, sd_state,
+						     pad);
+		break;
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return &xvsw->formats[pad];
+		get_fmt = &xvsw->formats[pad];
+		break;
 	default:
-		return NULL;
+		get_fmt = NULL;
+		break;
 	}
+
+	return get_fmt;
 }
 
 static int xvsw_get_format(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct xvswitch_device *xvsw = to_xvsw(subdev);
 	int pad = fmt->pad;
+	struct v4l2_mbus_framefmt *get_fmt;
 
 	/*
 	 * If control reg routing and pad is source pad then
@@ -160,13 +169,17 @@ static int xvsw_get_format(struct v4l2_subdev *subdev,
 		}
 	}
 
-	fmt->format = *xvsw_get_pad_format(xvsw, cfg, pad, fmt->which);
+	get_fmt = xvsw_get_pad_format(xvsw, sd_state, pad, fmt->which);
+	if (!get_fmt)
+		return -EINVAL;
+
+	fmt->format = *get_fmt;
 
 	return 0;
 }
 
 static int xvsw_set_format(struct v4l2_subdev *subdev,
-			   struct v4l2_subdev_pad_config *cfg,
+			   struct v4l2_subdev_state *sd_state,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct xvswitch_device *xvsw = to_xvsw(subdev);
@@ -184,7 +197,34 @@ static int xvsw_set_format(struct v4l2_subdev *subdev,
 		 * else clear the fmt->format as the source pad
 		 * isn't connected and return.
 		 */
-		return xvsw_get_format(subdev, cfg, fmt);
+		return xvsw_get_format(subdev, sd_state, fmt);
+	}
+
+	if (xvsw->nsinks == 1 && fmt->pad != 0) {
+		struct v4l2_mbus_framefmt *sinkformat;
+
+		/*
+		 * in tdest routing if there is only one sink then all the
+		 * source pads will have same property as sink pad, assuming
+		 * streams going to each source pad will have same
+		 * properties.
+		 */
+
+		/* get sink pad format */
+		sinkformat = xvsw_get_pad_format(xvsw, sd_state, 0, fmt->which);
+		if (!sinkformat)
+			return -EINVAL;
+
+		fmt->format = *sinkformat;
+
+		/* set sink pad format on source pad */
+		format = xvsw_get_pad_format(xvsw, sd_state, fmt->pad, fmt->which);
+		if (!format)
+			return -EINVAL;
+
+		*format = *sinkformat;
+
+		return 0;
 	}
 
 	/*
@@ -197,7 +237,9 @@ static int xvsw_set_format(struct v4l2_subdev *subdev,
 	 *
 	 * In Control reg routing mode, set format only for sink pads.
 	 */
-	format = xvsw_get_pad_format(xvsw, cfg, fmt->pad, fmt->which);
+	format = xvsw_get_pad_format(xvsw, sd_state, fmt->pad, fmt->which);
+	if (!format)
+		return -EINVAL;
 
 	format->code = fmt->format.code;
 	format->width = clamp_t(unsigned int, fmt->format.width,
@@ -255,7 +297,7 @@ static int xvsw_set_routing(struct v4l2_subdev *subdev,
 
 	mutex_lock(&subdev->entity.graph_obj.mdev->graph_mutex);
 
-	if (subdev->entity.stream_count) {
+	if (media_entity_pipeline(&subdev->entity)) {
 		ret = -EBUSY;
 		goto done;
 	}
@@ -345,7 +387,7 @@ static int xvsw_parse_of(struct xvswitch_device *xvsw)
 	struct device_node *ports;
 	struct device_node *port;
 	unsigned int nports = 0;
-	u32 routing_mode;
+	u32 routing_mode = 0;
 	int ret;
 
 	ret = of_property_read_u32(node, "xlnx,num-si-slots", &xvsw->nsinks);
@@ -363,7 +405,7 @@ static int xvsw_parse_of(struct xvswitch_device *xvsw)
 	}
 
 	ret = of_property_read_u32(node, "xlnx,routing-mode", &routing_mode);
-	if (ret < 0 || routing_mode < 0 || routing_mode > 1) {
+	if (ret < 0 || routing_mode > 1) {
 		dev_err(xvsw->dev, "missing or invalid xlnx,routing property\n");
 		return ret;
 	}

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /* Xilinx PCS/PMA Core phy driver
  *
  * Copyright (C) 2015 Xilinx, Inc.
@@ -139,6 +140,7 @@ static struct phy_driver xilinx_drivers[] = {
 		.phy_id = XILINX_PHY_ID,
 		.phy_id_mask = XILINX_PHY_ID_MASK,
 		.name = "Xilinx PCS/PMA PHY",
+		.flags = PHY_RST_AFTER_CLK_EN,
 		.features = PHY_GBIT_FEATURES,
 		.config_init = &xilinxphy_config_init,
 		.config_aneg = &genphy_config_aneg,

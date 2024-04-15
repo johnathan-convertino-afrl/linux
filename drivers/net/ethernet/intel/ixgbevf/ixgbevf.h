@@ -14,6 +14,7 @@
 #include <net/xdp.h>
 
 #include "vf.h"
+#include "ipsec.h"
 
 #define IXGBE_MAX_TXD_PWR	14
 #define IXGBE_MAX_DATA_PER_TXD	BIT(IXGBE_MAX_TXD_PWR)
@@ -163,6 +164,7 @@ struct ixgbevf_ring {
 #define IXGBE_TX_FLAGS_VLAN		BIT(1)
 #define IXGBE_TX_FLAGS_TSO		BIT(2)
 #define IXGBE_TX_FLAGS_IPV4		BIT(3)
+#define IXGBE_TX_FLAGS_IPSEC		BIT(4)
 #define IXGBE_TX_FLAGS_VLAN_MASK	0xffff0000
 #define IXGBE_TX_FLAGS_VLAN_PRIO_MASK	0x0000e000
 #define IXGBE_TX_FLAGS_VLAN_SHIFT	16
@@ -338,6 +340,7 @@ struct ixgbevf_adapter {
 	struct ixgbevf_ring *tx_ring[MAX_TX_QUEUES]; /* One per active queue */
 	u64 restart_queue;
 	u32 tx_timeout_count;
+	u64 tx_ipsec;
 
 	/* RX */
 	int num_rx_queues;
@@ -348,6 +351,7 @@ struct ixgbevf_adapter {
 	u64 alloc_rx_page_failed;
 	u64 alloc_rx_buff_failed;
 	u64 alloc_rx_page;
+	u64 rx_ipsec;
 
 	struct msix_entry *msix_entries;
 
@@ -383,7 +387,13 @@ struct ixgbevf_adapter {
 	u32 *rss_key;
 	u8 rss_indir_tbl[IXGBEVF_X550_VFRETA_SIZE];
 	u32 flags;
+	bool link_state;
+
 #define IXGBEVF_FLAGS_LEGACY_RX		BIT(1)
+
+#ifdef CONFIG_XFRM
+	struct ixgbevf_ipsec *ipsec;
+#endif /* CONFIG_XFRM */
 };
 
 enum ixbgevf_state_t {
@@ -422,6 +432,7 @@ extern const struct ixgbevf_info ixgbevf_X540_vf_info;
 extern const struct ixgbevf_info ixgbevf_X550_vf_info;
 extern const struct ixgbevf_info ixgbevf_X550EM_x_vf_info;
 extern const struct ixgbe_mbx_operations ixgbevf_mbx_ops;
+extern const struct ixgbe_mbx_operations ixgbevf_mbx_ops_legacy;
 extern const struct ixgbevf_info ixgbevf_x550em_a_vf_info;
 
 extern const struct ixgbevf_info ixgbevf_82599_vf_hv_info;
@@ -432,7 +443,6 @@ extern const struct ixgbe_mbx_operations ixgbevf_hv_mbx_ops;
 
 /* needed by ethtool.c */
 extern const char ixgbevf_driver_name[];
-extern const char ixgbevf_driver_version[];
 
 int ixgbevf_open(struct net_device *netdev);
 int ixgbevf_close(struct net_device *netdev);
@@ -451,6 +461,31 @@ int ethtool_ioctl(struct ifreq *ifr);
 
 extern void ixgbevf_write_eitr(struct ixgbevf_q_vector *q_vector);
 
+#ifdef CONFIG_IXGBEVF_IPSEC
+void ixgbevf_init_ipsec_offload(struct ixgbevf_adapter *adapter);
+void ixgbevf_stop_ipsec_offload(struct ixgbevf_adapter *adapter);
+void ixgbevf_ipsec_restore(struct ixgbevf_adapter *adapter);
+void ixgbevf_ipsec_rx(struct ixgbevf_ring *rx_ring,
+		      union ixgbe_adv_rx_desc *rx_desc,
+		      struct sk_buff *skb);
+int ixgbevf_ipsec_tx(struct ixgbevf_ring *tx_ring,
+		     struct ixgbevf_tx_buffer *first,
+		     struct ixgbevf_ipsec_tx_data *itd);
+#else
+static inline void ixgbevf_init_ipsec_offload(struct ixgbevf_adapter *adapter)
+{ }
+static inline void ixgbevf_stop_ipsec_offload(struct ixgbevf_adapter *adapter)
+{ }
+static inline void ixgbevf_ipsec_restore(struct ixgbevf_adapter *adapter) { }
+static inline void ixgbevf_ipsec_rx(struct ixgbevf_ring *rx_ring,
+				    union ixgbe_adv_rx_desc *rx_desc,
+				    struct sk_buff *skb) { }
+static inline int ixgbevf_ipsec_tx(struct ixgbevf_ring *tx_ring,
+				   struct ixgbevf_tx_buffer *first,
+				   struct ixgbevf_ipsec_tx_data *itd)
+{ return 0; }
+#endif /* CONFIG_IXGBEVF_IPSEC */
+
 void ixgbe_napi_add_all(struct ixgbevf_adapter *adapter);
 void ixgbe_napi_del_all(struct ixgbevf_adapter *adapter);
 
@@ -459,4 +494,8 @@ void ixgbe_napi_del_all(struct ixgbevf_adapter *adapter);
 
 #define hw_dbg(hw, format, arg...) \
 	netdev_dbg(ixgbevf_hw_to_netdev(hw), format, ## arg)
+
+s32 ixgbevf_poll_mbx(struct ixgbe_hw *hw, u32 *msg, u16 size);
+s32 ixgbevf_write_mbx(struct ixgbe_hw *hw, u32 *msg, u16 size);
+
 #endif /* _IXGBEVF_H_ */

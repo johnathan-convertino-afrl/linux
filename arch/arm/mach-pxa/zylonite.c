@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/arch/arm/mach-pxa/zylonite.c
  *
@@ -7,10 +8,6 @@
  *
  * 2007-09-04: eric miao <eric.miao@marvell.com>
  *             rewrite to align with latest kernel
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -19,21 +16,23 @@
 #include <linux/leds.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/gpio.h>
+#include <linux/gpio/machine.h>
 #include <linux/pwm.h>
 #include <linux/pwm_backlight.h>
 #include <linux/smc91x.h>
+#include <linux/soc/pxa/cpu.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include "pxa3xx.h"
-#include <mach/audio.h>
+#include <linux/platform_data/asoc-pxa.h>
 #include <linux/platform_data/video-pxafb.h>
 #include "zylonite.h"
 #include <linux/platform_data/mmc-pxamci.h>
 #include <linux/platform_data/usb-ohci-pxa27x.h>
 #include <linux/platform_data/keypad-pxa27x.h>
 #include <linux/platform_data/mtd-nand-pxa3xx.h>
+#include "mfp.h"
 
 #include "devices.h"
 #include "generic.h"
@@ -120,7 +119,6 @@ static struct pwm_lookup zylonite_pwm_lookup[] = {
 static struct platform_pwm_backlight_data zylonite_backlight_data = {
 	.max_brightness	= 100,
 	.dft_brightness	= 100,
-	.enable_gpio	= -1,
 };
 
 static struct platform_device zylonite_backlight_device = {
@@ -227,33 +225,68 @@ static inline void zylonite_init_lcd(void) {}
 static struct pxamci_platform_data zylonite_mci_platform_data = {
 	.detect_delay_ms= 200,
 	.ocr_mask	= MMC_VDD_32_33|MMC_VDD_33_34,
-	.gpio_card_detect = EXT_GPIO(0),
-	.gpio_card_ro	= EXT_GPIO(2),
-	.gpio_power	= -1,
+};
+
+#define PCA9539A_MCI_CD 0
+#define PCA9539A_MCI1_CD 1
+#define PCA9539A_MCI_WP 2
+#define PCA9539A_MCI1_WP 3
+#define PCA9539A_MCI3_CD 30
+#define PCA9539A_MCI3_WP 31
+
+static struct gpiod_lookup_table zylonite_mci_gpio_table = {
+	.dev_id = "pxa2xx-mci.0",
+	.table = {
+		GPIO_LOOKUP("i2c-pca9539-a", PCA9539A_MCI_CD,
+			    "cd", GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP("i2c-pca9539-a", PCA9539A_MCI_WP,
+			    "wp", GPIO_ACTIVE_LOW),
+		{ },
+	},
 };
 
 static struct pxamci_platform_data zylonite_mci2_platform_data = {
 	.detect_delay_ms= 200,
 	.ocr_mask	= MMC_VDD_32_33|MMC_VDD_33_34,
-	.gpio_card_detect = EXT_GPIO(1),
-	.gpio_card_ro	= EXT_GPIO(3),
-	.gpio_power	= -1,
+};
+
+static struct gpiod_lookup_table zylonite_mci2_gpio_table = {
+	.dev_id = "pxa2xx-mci.1",
+	.table = {
+		GPIO_LOOKUP("i2c-pca9539-a", PCA9539A_MCI1_CD,
+			    "cd", GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP("i2c-pca9539-a", PCA9539A_MCI1_WP,
+			    "wp", GPIO_ACTIVE_LOW),
+		{ },
+	},
 };
 
 static struct pxamci_platform_data zylonite_mci3_platform_data = {
 	.detect_delay_ms= 200,
 	.ocr_mask	= MMC_VDD_32_33|MMC_VDD_33_34,
-	.gpio_card_detect = EXT_GPIO(30),
-	.gpio_card_ro	= EXT_GPIO(31),
-	.gpio_power	= -1,
+};
+
+static struct gpiod_lookup_table zylonite_mci3_gpio_table = {
+	.dev_id = "pxa2xx-mci.2",
+	.table = {
+		GPIO_LOOKUP("i2c-pca9539-a", PCA9539A_MCI3_CD,
+			    "cd", GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP("i2c-pca9539-a", PCA9539A_MCI3_WP,
+			    "wp", GPIO_ACTIVE_LOW),
+		{ },
+	},
 };
 
 static void __init zylonite_init_mmc(void)
 {
+	gpiod_add_lookup_table(&zylonite_mci_gpio_table);
 	pxa_set_mci_info(&zylonite_mci_platform_data);
+	gpiod_add_lookup_table(&zylonite_mci2_gpio_table);
 	pxa3xx_set_mci2_info(&zylonite_mci2_platform_data);
-	if (cpu_is_pxa310())
+	if (cpu_is_pxa310()) {
+		gpiod_add_lookup_table(&zylonite_mci3_gpio_table);
 		pxa3xx_set_mci3_info(&zylonite_mci3_platform_data);
+	}
 }
 #else
 static inline void zylonite_init_mmc(void) {}
@@ -393,6 +426,35 @@ static void __init zylonite_init_ohci(void)
 static inline void zylonite_init_ohci(void) {}
 #endif /* CONFIG_USB_OHCI_HCD || CONFIG_USB_OHCI_HCD_MODULE */
 
+static struct gpiod_lookup_table zylonite_wm97xx_touch_gpio15_table = {
+	.dev_id = "wm97xx-touch.0",
+	.table = {
+		GPIO_LOOKUP("gpio-pxa", mfp_to_gpio(MFP_PIN_GPIO15),
+			    "touch", GPIO_ACTIVE_LOW),
+		{ },
+	},
+};
+
+static struct gpiod_lookup_table zylonite_wm97xx_touch_gpio26_table = {
+	.dev_id = "wm97xx-touch.0",
+	.table = {
+		GPIO_LOOKUP("gpio-pxa", mfp_to_gpio(MFP_PIN_GPIO26),
+			    "touch", GPIO_ACTIVE_LOW),
+		{ },
+	},
+};
+
+static void __init zylonite_init_wm97xx_touch(void)
+{
+	if (!IS_ENABLED(CONFIG_TOUCHSCREEN_WM97XX_ZYLONITE))
+		return;
+
+	if (cpu_is_pxa320())
+		gpiod_add_lookup_table(&zylonite_wm97xx_touch_gpio15_table);
+	else
+		gpiod_add_lookup_table(&zylonite_wm97xx_touch_gpio26_table);
+}
+
 static void __init zylonite_init(void)
 {
 	pxa_set_ffuart_info(NULL);
@@ -418,6 +480,7 @@ static void __init zylonite_init(void)
 	zylonite_init_nand();
 	zylonite_init_leds();
 	zylonite_init_ohci();
+	zylonite_init_wm97xx_touch();
 }
 
 MACHINE_START(ZYLONITE, "PXA3xx Platform Development Kit (aka Zylonite)")

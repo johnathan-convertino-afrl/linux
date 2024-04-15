@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Amstrad E3 (Delta) keyboard port driver
  *
  *  Copyright (c) 2006 Matt Callow
  *  Copyright (c) 2010 Janusz Krzysztofik
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
  *
  * Thanks to Cliff Lawson for his help
  *
@@ -162,8 +159,8 @@ static int ams_delta_serio_init(struct platform_device *pdev)
 	serio->id.type = SERIO_8042;
 	serio->open = ams_delta_serio_open;
 	serio->close = ams_delta_serio_close;
-	strlcpy(serio->name, "AMS DELTA keyboard adapter", sizeof(serio->name));
-	strlcpy(serio->phys, dev_name(&pdev->dev), sizeof(serio->phys));
+	strscpy(serio->name, "AMS DELTA keyboard adapter", sizeof(serio->name));
+	strscpy(serio->phys, dev_name(&pdev->dev), sizeof(serio->phys));
 	serio->dev.parent = &pdev->dev;
 	serio->port_data = priv;
 

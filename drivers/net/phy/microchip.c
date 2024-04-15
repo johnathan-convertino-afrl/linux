@@ -1,18 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Microchip Technology
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -56,16 +44,32 @@ static int lan88xx_phy_config_intr(struct phy_device *phydev)
 			       LAN88XX_INT_MASK_LINK_CHANGE_);
 	} else {
 		rc = phy_write(phydev, LAN88XX_INT_MASK, 0);
+		if (rc)
+			return rc;
+
+		/* Ack interrupts after they have been disabled */
+		rc = phy_read(phydev, LAN88XX_INT_STS);
 	}
 
 	return rc < 0 ? rc : 0;
 }
 
-static int lan88xx_phy_ack_interrupt(struct phy_device *phydev)
+static irqreturn_t lan88xx_handle_interrupt(struct phy_device *phydev)
 {
-	int rc = phy_read(phydev, LAN88XX_INT_STS);
+	int irq_status;
 
-	return rc < 0 ? rc : 0;
+	irq_status = phy_read(phydev, LAN88XX_INT_STS);
+	if (irq_status < 0) {
+		phy_error(phydev);
+		return IRQ_NONE;
+	}
+
+	if (!(irq_status & LAN88XX_INT_STS_LINK_CHANGE_))
+		return IRQ_NONE;
+
+	phy_trigger_machine(phydev);
+
+	return IRQ_HANDLED;
 }
 
 static int lan88xx_suspend(struct phy_device *phydev)
@@ -88,7 +92,7 @@ static int lan88xx_TR_reg_set(struct phy_device *phydev, u16 regaddr,
 	/* Save current page */
 	save_page = phy_save_page(phydev);
 	if (save_page < 0) {
-		pr_warn("Failed to get current page\n");
+		phydev_warn(phydev, "Failed to get current page\n");
 		goto err;
 	}
 
@@ -98,14 +102,14 @@ static int lan88xx_TR_reg_set(struct phy_device *phydev, u16 regaddr,
 	ret = __phy_write(phydev, LAN88XX_EXT_PAGE_TR_LOW_DATA,
 			  (data & 0xFFFF));
 	if (ret < 0) {
-		pr_warn("Failed to write TR low data\n");
+		phydev_warn(phydev, "Failed to write TR low data\n");
 		goto err;
 	}
 
 	ret = __phy_write(phydev, LAN88XX_EXT_PAGE_TR_HIGH_DATA,
 			  (data & 0x00FF0000) >> 16);
 	if (ret < 0) {
-		pr_warn("Failed to write TR high data\n");
+		phydev_warn(phydev, "Failed to write TR high data\n");
 		goto err;
 	}
 
@@ -115,14 +119,15 @@ static int lan88xx_TR_reg_set(struct phy_device *phydev, u16 regaddr,
 
 	ret = __phy_write(phydev, LAN88XX_EXT_PAGE_TR_CR, buf);
 	if (ret < 0) {
-		pr_warn("Failed to write data in reg\n");
+		phydev_warn(phydev, "Failed to write data in reg\n");
 		goto err;
 	}
 
 	usleep_range(1000, 2000);/* Wait for Data to be written */
 	val = __phy_read(phydev, LAN88XX_EXT_PAGE_TR_CR);
 	if (!(val & 0x8000))
-		pr_warn("TR Register[0x%X] configuration failed\n", regaddr);
+		phydev_warn(phydev, "TR Register[0x%X] configuration failed\n",
+			    regaddr);
 err:
 	return phy_restore_page(phydev, save_page, ret);
 }
@@ -137,7 +142,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x0F82, 0x12B00A);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x0F82]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x0F82]\n");
 
 	/* Get access to Channel b'10, Node b'1101, Register 0x06.
 	 * Write 24-bit value 0xD2C46F to register. Setting SSTrKf1000Slv,
@@ -145,7 +150,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x168C, 0xD2C46F);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x168C]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x168C]\n");
 
 	/* Get access to Channel b'10, Node b'1111, Register 0x11.
 	 * Write 24-bit value 0x620 to register. Setting rem_upd_done_thresh
@@ -153,7 +158,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x17A2, 0x620);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x17A2]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x17A2]\n");
 
 	/* Get access to Channel b'10, Node b'1101, Register 0x10.
 	 * Write 24-bit value 0xEEFFDD to register. Setting
@@ -162,7 +167,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x16A0, 0xEEFFDD);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x16A0]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x16A0]\n");
 
 	/* Get access to Channel b'10, Node b'1101, Register 0x13.
 	 * Write 24-bit value 0x071448 to register. Setting
@@ -170,7 +175,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x16A6, 0x071448);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x16A6]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x16A6]\n");
 
 	/* Get access to Channel b'10, Node b'1101, Register 0x12.
 	 * Write 24-bit value 0x13132F to register. Setting
@@ -178,7 +183,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x16A4, 0x13132F);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x16A4]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x16A4]\n");
 
 	/* Get access to Channel b'10, Node b'1101, Register 0x14.
 	 * Write 24-bit value 0x0 to register. Setting eee_3level_delay,
@@ -186,7 +191,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x16A8, 0x0);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x16A8]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x16A8]\n");
 
 	/* Get access to Channel b'01, Node b'1111, Register 0x34.
 	 * Write 24-bit value 0x91B06C to register. Setting
@@ -195,7 +200,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x0FE8, 0x91B06C);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x0FE8]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x0FE8]\n");
 
 	/* Get access to Channel b'01, Node b'1111, Register 0x3E.
 	 * Write 24-bit value 0xC0A028 to register. Setting
@@ -204,7 +209,7 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x0FFC, 0xC0A028);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x0FFC]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x0FFC]\n");
 
 	/* Get access to Channel b'01, Node b'1111, Register 0x35.
 	 * Write 24-bit value 0x041600 to register. Setting
@@ -213,14 +218,14 @@ static void lan88xx_config_TR_regs(struct phy_device *phydev)
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x0FEA, 0x041600);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x0FEA]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x0FEA]\n");
 
 	/* Get access to Channel b'10, Node b'1101, Register 0x03.
 	 * Write 24-bit value 0x000004 to register. Setting TrFreeze bits.
 	 */
 	err = lan88xx_TR_reg_set(phydev, 0x1686, 0x000004);
 	if (err < 0)
-		pr_warn("Failed to Set Register[0x1686]\n");
+		phydev_warn(phydev, "Failed to Set Register[0x1686]\n");
 }
 
 static int lan88xx_probe(struct phy_device *phydev)
@@ -316,7 +321,6 @@ static int lan88xx_config_init(struct phy_device *phydev)
 {
 	int val;
 
-	genphy_config_init(phydev);
 	/*Zerodetect delay enable */
 	val = phy_read_mmd(phydev, MDIO_MMD_PCS,
 			   PHY_ARDENNES_MMD_DEV_3_PHY_CFG);
@@ -340,12 +344,15 @@ static int lan88xx_config_aneg(struct phy_device *phydev)
 
 static struct phy_driver microchip_phy_driver[] = {
 {
-	.phy_id		= 0x0007c130,
-	.phy_id_mask	= 0xfffffff0,
+	.phy_id		= 0x0007c132,
+	/* This mask (0xfffffff2) is to differentiate from
+	 * LAN8742 (phy_id 0x0007c130 and 0x0007c131)
+	 * and allows future phy_id revisions.
+	 */
+	.phy_id_mask	= 0xfffffff2,
 	.name		= "Microchip LAN88xx",
 
-	.features	= PHY_GBIT_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT,
+	/* PHY_GBIT_FEATURES */
 
 	.probe		= lan88xx_probe,
 	.remove		= lan88xx_remove,
@@ -353,8 +360,8 @@ static struct phy_driver microchip_phy_driver[] = {
 	.config_init	= lan88xx_config_init,
 	.config_aneg	= lan88xx_config_aneg,
 
-	.ack_interrupt	= lan88xx_phy_ack_interrupt,
 	.config_intr	= lan88xx_phy_config_intr,
+	.handle_interrupt = lan88xx_handle_interrupt,
 
 	.suspend	= lan88xx_suspend,
 	.resume		= genphy_resume,
@@ -366,7 +373,7 @@ static struct phy_driver microchip_phy_driver[] = {
 module_phy_driver(microchip_phy_driver);
 
 static struct mdio_device_id __maybe_unused microchip_tbl[] = {
-	{ 0x0007c130, 0xfffffff0 },
+	{ 0x0007c132, 0xfffffff2 },
 	{ }
 };
 

@@ -19,7 +19,6 @@
 #include <linux/ethtool.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/netdevice.h>
 #include <linux/netpoll.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_vlan.h>
@@ -41,14 +40,14 @@ static int net_failover_open(struct net_device *dev)
 
 	primary_dev = rtnl_dereference(nfo_info->primary_dev);
 	if (primary_dev) {
-		err = dev_open(primary_dev);
+		err = dev_open(primary_dev, NULL);
 		if (err)
 			goto err_primary_open;
 	}
 
 	standby_dev = rtnl_dereference(nfo_info->standby_dev);
 	if (standby_dev) {
-		err = dev_open(standby_dev);
+		err = dev_open(standby_dev, NULL);
 		if (err)
 			goto err_standby_open;
 	}
@@ -62,7 +61,8 @@ static int net_failover_open(struct net_device *dev)
 	return 0;
 
 err_standby_open:
-	dev_close(primary_dev);
+	if (primary_dev)
+		dev_close(primary_dev);
 err_primary_open:
 	netif_tx_disable(dev);
 	return err;
@@ -89,7 +89,7 @@ static int net_failover_close(struct net_device *dev)
 static netdev_tx_t net_failover_drop_xmit(struct sk_buff *skb,
 					  struct net_device *dev)
 {
-	atomic_long_inc(&dev->tx_dropped);
+	dev_core_stats_tx_dropped_inc(dev);
 	dev_kfree_skb_any(skb);
 	return NETDEV_TX_OK;
 }
@@ -116,8 +116,7 @@ static netdev_tx_t net_failover_start_xmit(struct sk_buff *skb,
 
 static u16 net_failover_select_queue(struct net_device *dev,
 				     struct sk_buff *skb,
-				     struct net_device *sb_dev,
-				     select_queue_fallback_t fallback)
+				     struct net_device *sb_dev)
 {
 	struct net_failover_info *nfo_info = netdev_priv(dev);
 	struct net_device *primary_dev;
@@ -128,10 +127,9 @@ static u16 net_failover_select_queue(struct net_device *dev,
 		const struct net_device_ops *ops = primary_dev->netdev_ops;
 
 		if (ops->ndo_select_queue)
-			txq = ops->ndo_select_queue(primary_dev, skb,
-						    sb_dev, fallback);
+			txq = ops->ndo_select_queue(primary_dev, skb, sb_dev);
 		else
-			txq = fallback(primary_dev, skb, NULL);
+			txq = netdev_pick_tx(primary_dev, skb, NULL);
 
 		qdisc_skb_cb(skb)->slave_dev_queue_mapping = skb->queue_mapping;
 
@@ -326,8 +324,8 @@ static const struct net_device_ops failover_dev_ops = {
 static void nfo_ethtool_get_drvinfo(struct net_device *dev,
 				    struct ethtool_drvinfo *drvinfo)
 {
-	strlcpy(drvinfo->driver, FAILOVER_NAME, sizeof(drvinfo->driver));
-	strlcpy(drvinfo->version, FAILOVER_VERSION, sizeof(drvinfo->version));
+	strscpy(drvinfo->driver, FAILOVER_NAME, sizeof(drvinfo->driver));
+	strscpy(drvinfo->version, FAILOVER_VERSION, sizeof(drvinfo->version));
 }
 
 static int nfo_ethtool_get_link_ksettings(struct net_device *dev,
@@ -518,7 +516,7 @@ static int net_failover_slave_register(struct net_device *slave_dev,
 	dev_hold(slave_dev);
 
 	if (netif_running(failover_dev)) {
-		err = dev_open(slave_dev);
+		err = dev_open(slave_dev, NULL);
 		if (err && (err != -EBUSY)) {
 			netdev_err(failover_dev, "Opening slave %s failed err:%d\n",
 				   slave_dev->name, err);
@@ -603,6 +601,9 @@ static int net_failover_slave_unregister(struct net_device *slave_dev,
 	primary_dev = rtnl_dereference(nfo_info->primary_dev);
 	standby_dev = rtnl_dereference(nfo_info->standby_dev);
 
+	if (WARN_ON_ONCE(slave_dev != primary_dev && slave_dev != standby_dev))
+		return -ENODEV;
+
 	vlan_vids_del_by_dev(slave_dev, failover_dev);
 	dev_uc_unsync(slave_dev, failover_dev);
 	dev_mc_unsync(slave_dev, failover_dev);
@@ -678,7 +679,7 @@ static int net_failover_slave_name_change(struct net_device *slave_dev,
 	/* We need to bring up the slave after the rename by udev in case
 	 * open failed with EBUSY when it was registered.
 	 */
-	dev_open(slave_dev);
+	dev_open(slave_dev, NULL);
 
 	return 0;
 }
@@ -696,7 +697,7 @@ static struct failover_ops net_failover_ops = {
 /**
  * net_failover_create - Create and register a failover instance
  *
- * @dev: standby netdev
+ * @standby_dev: standby netdev
  *
  * Creates a failover netdev and registers a failover instance for a standby
  * netdev. Used by paravirtual drivers that use 3-netdev model.
@@ -747,8 +748,7 @@ struct failover *net_failover_create(struct net_device *standby_dev)
 	failover_dev->hw_features |= NETIF_F_GSO_ENCAP_ALL;
 	failover_dev->features |= failover_dev->hw_features;
 
-	memcpy(failover_dev->dev_addr, standby_dev->dev_addr,
-	       failover_dev->addr_len);
+	dev_addr_set(failover_dev, standby_dev->dev_addr);
 
 	failover_dev->min_mtu = standby_dev->min_mtu;
 	failover_dev->max_mtu = standby_dev->max_mtu;
@@ -762,8 +762,10 @@ struct failover *net_failover_create(struct net_device *standby_dev)
 	netif_carrier_off(failover_dev);
 
 	failover = failover_register(failover_dev, &net_failover_ops);
-	if (IS_ERR(failover))
+	if (IS_ERR(failover)) {
+		err = PTR_ERR(failover);
 		goto err_failover_register;
+	}
 
 	return failover;
 

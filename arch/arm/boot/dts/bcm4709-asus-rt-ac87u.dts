@@ -19,9 +19,10 @@
 		bootargs = "console=ttyS0,115200";
 	};
 
-	memory {
-		reg = <0x00000000 0x08000000
-		       0x88000000 0x08000000>;
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00000000 0x08000000>,
+		      <0x88000000 0x08000000>;
 	};
 
 	leds {
@@ -46,16 +47,14 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
-		#address-cells = <1>;
-		#size-cells = <0>;
 
-		wps {
+		button-wps {
 			label = "WPS";
 			linux,code = <KEY_WPS_BUTTON>;
 			gpios = <&chipcommon 2 GPIO_ACTIVE_LOW>;
 		};
 
-		restart {
+		button-restart {
 			label = "Reset";
 			linux,code = <KEY_RESTART>;
 			gpios = <&chipcommon 11 GPIO_ACTIVE_LOW>;
@@ -65,4 +64,35 @@
 
 &usb3_phy {
 	status = "okay";
+};
+
+&nandcs {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot@0 {
+			label = "boot";
+			reg = <0x00000000 0x00080000>;
+			read-only;
+		};
+
+		nvram@80000 {
+			label = "nvram";
+			reg = <0x00080000 0x00180000>;
+		};
+
+		firmware@200000 {
+			label = "firmware";
+			reg = <0x00200000 0x07cc0000>;
+			compatible = "brcm,trx";
+		};
+
+		asus@7ec0000 {
+			label = "asus";
+			reg = <0x07ec0000 0x00140000>;
+			read-only;
+		};
+	};
 };

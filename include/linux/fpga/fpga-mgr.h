@@ -9,10 +9,10 @@
 #define _LINUX_FPGA_MGR_H
 
 #include <linux/mutex.h>
+#include <linux/miscdevice.h>
 #include <linux/platform_device.h>
 
 #define ENCRYPTED_KEY_LEN	64 /* Bytes */
-#define ENCRYPTED_IV_LEN	24 /* Bytes */
 
 struct fpga_manager;
 struct sg_table;
@@ -25,6 +25,8 @@ struct sg_table;
  * @FPGA_MGR_STATE_RESET: FPGA in reset state
  * @FPGA_MGR_STATE_FIRMWARE_REQ: firmware request in progress
  * @FPGA_MGR_STATE_FIRMWARE_REQ_ERR: firmware request failed
+ * @FPGA_MGR_STATE_PARSE_HEADER: parse FPGA image header
+ * @FPGA_MGR_STATE_PARSE_HEADER_ERR: Error during PARSE_HEADER stage
  * @FPGA_MGR_STATE_WRITE_INIT: preparing FPGA for programming
  * @FPGA_MGR_STATE_WRITE_INIT_ERR: Error during WRITE_INIT stage
  * @FPGA_MGR_STATE_WRITE: writing image to FPGA
@@ -44,7 +46,9 @@ enum fpga_mgr_states {
 	FPGA_MGR_STATE_FIRMWARE_REQ,
 	FPGA_MGR_STATE_FIRMWARE_REQ_ERR,
 
-	/* write sequence: init, write, complete */
+	/* write sequence: parse header, init, write, complete */
+	FPGA_MGR_STATE_PARSE_HEADER,
+	FPGA_MGR_STATE_PARSE_HEADER_ERR,
 	FPGA_MGR_STATE_WRITE_INIT,
 	FPGA_MGR_STATE_WRITE_INIT_ERR,
 	FPGA_MGR_STATE_WRITE,
@@ -65,19 +69,32 @@ enum fpga_mgr_states {
  *
  * %FPGA_MGR_EXTERNAL_CONFIG: FPGA has been configured prior to Linux booting
  *
- * %FPGA_MGR_ENCRYPTED_BITSTREAM: indicates bitstream is encrypted
+ * %FPGA_MGR_ENCRYPTED_BITSTREAM: indicates bitstream is encrypted with
+ *				  device key
  *
  * %FPGA_MGR_BITSTREAM_LSB_FIRST: SPI bitstream bit order is LSB first
  *
  * %FPGA_MGR_COMPRESSED_BITSTREAM: FPGA bitstream is compressed
+ *
+ * %FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM: indicates bitstream is encrypted with
+ *					  user key
+ * %FPGA_MGR_DDR_MEM_AUTH_BITSTREAM: do bitstream authentication using DDR
+ *				     memory if supported
+ * %FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM: do bitstream authentication using secure
+ *					memory if supported
  */
 #define FPGA_MGR_PARTIAL_RECONFIG	BIT(0)
 #define FPGA_MGR_EXTERNAL_CONFIG	BIT(1)
 #define FPGA_MGR_ENCRYPTED_BITSTREAM	BIT(2)
 #define FPGA_MGR_BITSTREAM_LSB_FIRST	BIT(3)
 #define FPGA_MGR_COMPRESSED_BITSTREAM	BIT(4)
+#define FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM	BIT(5)
+#define FPGA_MGR_DDR_MEM_AUTH_BITSTREAM		BIT(6)
+#define FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM	BIT(7)
+#define FPGA_MGR_CONFIG_DMA_BUF			BIT(8)
+
 /**
- * struct fpga_image_info - information specific to a FPGA image
+ * struct fpga_image_info - information specific to an FPGA image
  * @flags: boolean flags as defined above
  * @enable_timeout_us: maximum time to enable traffic through bridge (uSec)
  * @disable_timeout_us: maximum time to disable traffic through bridge (uSec)
@@ -85,10 +102,12 @@ enum fpga_mgr_states {
  *	   status in the write_complete op.
  * @firmware_name: name of FPGA image firmware file
  * @key: key value useful for Encrypted Bitstream loading to read the userkey
- * @iv: iv (or) initialization vector is useful for Encrypted Bitstream loading
  * @sgt: scatter/gather table containing FPGA image
  * @buf: contiguous buffer containing FPGA image
  * @count: size of buf
+ * @header_size: size of image header.
+ * @data_size: size of image data to be sent to the device. If not specified,
+ *	whole image will be used. Header may be skipped in either case.
  * @region_id: id of target region
  * @dev: device that owns this
  * @overlay: Device Tree overlay
@@ -100,10 +119,11 @@ struct fpga_image_info {
 	u32 config_complete_timeout_us;
 	char *firmware_name;
 	char key[ENCRYPTED_KEY_LEN];
-	char iv[ENCRYPTED_IV_LEN];
 	struct sg_table *sgt;
 	const char *buf;
 	size_t count;
+	size_t header_size;
+	size_t data_size;
 	int region_id;
 	struct device *dev;
 #ifdef CONFIG_OF
@@ -112,11 +132,48 @@ struct fpga_image_info {
 };
 
 /**
+ * struct fpga_compat_id - id for compatibility check
+ *
+ * @id_h: high 64bit of the compat_id
+ * @id_l: low 64bit of the compat_id
+ */
+struct fpga_compat_id {
+	u64 id_h;
+	u64 id_l;
+};
+
+/**
+ * struct fpga_manager_info - collection of parameters for an FPGA Manager
+ * @name: fpga manager name
+ * @compat_id: FPGA manager id for compatibility check.
+ * @mops: pointer to structure of fpga manager ops
+ * @priv: fpga manager private data
+ *
+ * fpga_manager_info contains parameters for the register_full function.
+ * These are separated into an info structure because they some are optional
+ * others could be added to in the future. The info structure facilitates
+ * maintaining a stable API.
+ */
+struct fpga_manager_info {
+	const char *name;
+	struct fpga_compat_id *compat_id;
+	const struct fpga_manager_ops *mops;
+	void *priv;
+};
+
+/**
  * struct fpga_manager_ops - ops for low level fpga manager drivers
- * @initial_header_size: Maximum number of bytes that should be passed into write_init
+ * @initial_header_size: minimum number of bytes that should be passed into
+ *	parse_header and write_init.
+ * @skip_header: bool flag to tell fpga-mgr core whether it should skip
+ *	info->header_size part at the beginning of the image when invoking
+ *	write callback.
  * @state: returns an enum value of the FPGA's state
  * @status: returns status of the FPGA, including reconfiguration error code
- * @write_init: prepare the FPGA to receive confuration data
+ * @parse_header: parse FPGA image header to set info->header_size and
+ *	info->data_size. In case the input buffer is not large enough, set
+ *	required size to info->header_size and return -EAGAIN.
+ * @write_init: prepare the FPGA to receive configuration data
  * @write: write count bytes of configuration data to the FPGA
  * @write_sg: write the scatter list of configuration data to the FPGA
  * @write_complete: set FPGA to operating state after writing is done
@@ -130,8 +187,12 @@ struct fpga_image_info {
  */
 struct fpga_manager_ops {
 	size_t initial_header_size;
+	bool skip_header;
 	enum fpga_mgr_states (*state)(struct fpga_manager *mgr);
 	u64 (*status)(struct fpga_manager *mgr);
+	int (*parse_header)(struct fpga_manager *mgr,
+			    struct fpga_image_info *info,
+			    const char *buf, size_t count);
 	int (*write_init)(struct fpga_manager *mgr,
 			  struct fpga_image_info *info,
 			  const char *buf, size_t count);
@@ -150,43 +211,42 @@ struct fpga_manager_ops {
 #define FPGA_MGR_STATUS_INCOMPATIBLE_IMAGE_ERR	BIT(2)
 #define FPGA_MGR_STATUS_IP_PROTOCOL_ERR		BIT(3)
 #define FPGA_MGR_STATUS_FIFO_OVERFLOW_ERR	BIT(4)
-
-/**
- * struct fpga_compat_id - id for compatibility check
- *
- * @id_h: high 64bit of the compat_id
- * @id_l: low 64bit of the compat_id
- */
-struct fpga_compat_id {
-	u64 id_h;
-	u64 id_l;
-};
+#define FPGA_MGR_STATUS_SECURITY_ERR		BIT(5)
+#define FPGA_MGR_STATUS_DEVICE_INIT_ERR		BIT(6)
+#define FPGA_MGR_STATUS_SIGNAL_ERR		BIT(7)
+#define FPGA_MGR_STATUS_HIGH_Z_STATE_ERR	BIT(8)
+#define FPGA_MGR_STATUS_EOS_ERR			BIT(9)
+#define FPGA_MGR_STATUS_FIRMWARE_REQ_ERR	BIT(10)
 
 /**
  * struct fpga_manager - fpga manager structure
  * @name: name of low level fpga manager
  * @flags: flags determines the type of Bitstream
  * @key: key value useful for Encrypted Bitstream loading to read the userkey
- * @iv: iv (or) initialization vector is useful for Encrypted Bitstream loading
  * @dev: fpga manager device
+ * @miscdev: information about character device node
+ * @dmabuf: shared dma buffer
  * @ref_mutex: only allows one reference to fpga manager
  * @state: state of fpga manager
  * @compat_id: FPGA manager id for compatibility check.
  * @mops: pointer to struct of fpga manager ops
  * @priv: low level driver private date
+ * @err: low level driver error code
  * @dir: debugfs image directory
  */
 struct fpga_manager {
 	const char *name;
-	long int flags;
-	char key[ENCRYPTED_KEY_LEN];
-	char iv[ENCRYPTED_IV_LEN];
+	unsigned long flags;
+	char key[ENCRYPTED_KEY_LEN + 1];
 	struct device dev;
+	struct miscdevice miscdev;
+	struct dma_buf *dmabuf;
 	struct mutex ref_mutex;
 	enum fpga_mgr_states state;
 	struct fpga_compat_id *compat_id;
 	const struct fpga_manager_ops *mops;
 	void *priv;
+	int err;
 #ifdef CONFIG_FPGA_MGR_DEBUG_FS
 	struct dentry *dir;
 #endif
@@ -209,11 +269,20 @@ struct fpga_manager *fpga_mgr_get(struct device *dev);
 
 void fpga_mgr_put(struct fpga_manager *mgr);
 
-struct fpga_manager *fpga_mgr_create(struct device *dev, const char *name,
-				     const struct fpga_manager_ops *mops,
-				     void *priv);
-void fpga_mgr_free(struct fpga_manager *mgr);
-int fpga_mgr_register(struct fpga_manager *mgr);
+struct fpga_manager *
+fpga_mgr_register_full(struct device *parent, const struct fpga_manager_info *info);
+
+struct fpga_manager *
+fpga_mgr_register(struct device *parent, const char *name,
+		  const struct fpga_manager_ops *mops, void *priv);
 void fpga_mgr_unregister(struct fpga_manager *mgr);
+
+struct fpga_manager *
+devm_fpga_mgr_register_full(struct device *parent, const struct fpga_manager_info *info);
+struct fpga_manager *
+devm_fpga_mgr_register(struct device *parent, const char *name,
+		       const struct fpga_manager_ops *mops, void *priv);
+
+#define FPGA_IOCTL_LOAD_DMA_BUFF	_IOWR('R', 1, __u32)
 
 #endif /*_LINUX_FPGA_MGR_H */

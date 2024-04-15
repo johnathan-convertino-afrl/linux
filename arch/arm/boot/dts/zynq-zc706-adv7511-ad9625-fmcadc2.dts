@@ -1,7 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Analog Devices AD-FMCADC2-EBZ
+ * https://wiki.analog.com/resources/eval/user-guides/ad-fmcadc2-ebz
+ *
+ * hdl_project: <fmcadc2/zc706>
+ * board_revision: <>
+ *
+ * Copyright (C) 2014-2020 Analog Devices Inc.
+ */
 /dts-v1/;
 
 #include "zynq-zc706.dtsi"
 #include "zynq-zc706-adv7511.dtsi"
+#include <dt-bindings/jesd204/adxcvr.h>
 
 / {
 	clocks {
@@ -47,33 +58,13 @@
 			compatible = "at24,24c02";
 			reg = <0x50>;
 		};
-
-		eeprom@54 {
-			compatible = "at24,24c02";
-			reg = <0x54>;
-		};
-	};
-
-	i2c@6 { /* LPC IIC */
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <6>;
-		eeprom@50 {
-			compatible = "at24,24c02";
-			reg = <0x50>;
-		};
-
-		eeprom@54 {
-			compatible = "at24,24c02";
-			reg = <0x54>;
-		};
 	};
 };
 
 &fpga_axi {
 	rx_dma: rx-dmac@7c420000 {
 		compatible = "adi,axi-dmac-1.00.a";
-		reg = <0x7c420000 0x10000>;
+		reg = <0x7c420000 0x1000>;
 		#dma-cells = <1>;
 		interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&clkc 16>;
@@ -106,7 +97,7 @@
 
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 
-		clocks = <&clkc 16>, <&axi_adxcvr 1>, <&axi_adxcvr 0>;
+		clocks = <&clkc 15>, <&axi_adxcvr 1>, <&axi_adxcvr 0>;
 		clock-names = "s_axi_aclk", "device_clk", "lane_clk";
 
 		#clock-cells = <0>;
@@ -126,9 +117,8 @@
 		#clock-cells = <1>;
 		clock-output-names = "adc_gt_clk", "rx_out_clk";
 
-		adi,sys-clk-select = <0>;
-		adi,out-clk-select = <2>;
-		adi,use-cpll-enable;
+		adi,sys-clk-select = <XCVR_CPLL>;
+		adi,out-clk-select = <XCVR_OUTCLK_PMA>;
 	};
 };
 

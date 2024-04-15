@@ -4,6 +4,15 @@
 
 #define fmc_i2c fmc_lpc_iic
 
+/ {
+	model = "Analog Devices AD-FMCOMMS1-EBZ @Xilinx/kc705";
+};
+
+/* fmcomms2_vc707: updated 2019_R2 */
+&axi_intc {
+	xlnx,kind-of-intr = <0xffffc5d0>;
+};
+
 &amba_pl {
 	axi_ad9122: cf-ad9122-core-lpc@74204000 {
 		compatible = "adi,axi-ad9122-6.00.a";
@@ -19,19 +28,6 @@
 		reg = <0x7c420000 0x10000>;
 		#dma-cells = <1>;
 		clocks = <&clk_bus_0>;
-
-		adi,channels {
-			#size-cells = <0>;
-			#address-cells = <1>;
-
-			dma-channel@0 {
-				reg = <0>;
-				adi,source-bus-width = <64>;
-				adi,source-bus-type = <0>;
-				adi,destination-bus-width = <64>;
-				adi,destination-bus-type = <2>;
-			};
-		};
 	};
 	axi_ad9643: cf-ad9643-core-lpc@79020000 {
 		compatible = "adi,axi-ad9643-6.00.a";
@@ -47,19 +43,6 @@
 		reg = <0x7c400000 0x10000>;
 		#dma-cells = <1>;
 		clocks = <&clk_bus_0>;
-
-		adi,channels {
-			#size-cells = <0>;
-			#address-cells = <1>;
-
-			dma-channel@0 {
-				reg = <0>;
-				adi,source-bus-width = <64>;
-				adi,source-bus-type = <2>;
-				adi,destination-bus-width = <64>;
-				adi,destination-bus-type = <0>;
-			};
-		};
 	};
 };
 

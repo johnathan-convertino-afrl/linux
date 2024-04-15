@@ -1,17 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *   Copyright (C) 2017, Microsoft Corporation.
  *
  *   Author(s): Long Li <longli@microsoft.com>
- *
- *   This program is free software;  you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
- *   the GNU General Public License for more details.
  */
 #ifndef _SMBDIRECT_H
 #define _SMBDIRECT_H
@@ -70,14 +61,12 @@ struct smbd_connection {
 	int ri_rc;
 	struct completion ri_done;
 	wait_queue_head_t conn_wait;
-	wait_queue_head_t wait_destroy;
+	wait_queue_head_t disconn_wait;
 
 	struct completion negotiate_completion;
 	bool negotiate_done;
 
-	struct work_struct destroy_work;
 	struct work_struct disconnect_work;
-	struct work_struct recv_done_work;
 	struct work_struct post_send_credits_work;
 
 	spinlock_t lock_new_credits_offered;
@@ -102,7 +91,7 @@ struct smbd_connection {
 	/* Memory registrations */
 	/* Maximum number of RDMA read/write outstanding on this connection */
 	int responder_resources;
-	/* Maximum number of SGEs in a RDMA write/read */
+	/* Maximum number of pages in a single RDMA write/read on this connection */
 	int max_frmr_depth;
 	/*
 	 * If payload is less than or equal to the threshold,
@@ -123,17 +112,9 @@ struct smbd_connection {
 	wait_queue_head_t wait_for_mr_cleanup;
 
 	/* Activity accoutning */
-	/* Pending reqeusts issued from upper layer */
-	int smbd_send_pending;
-	wait_queue_head_t wait_smbd_send_pending;
-
-	int smbd_recv_pending;
-	wait_queue_head_t wait_smbd_recv_pending;
-
 	atomic_t send_pending;
 	wait_queue_head_t wait_send_pending;
-	atomic_t send_payload_pending;
-	wait_queue_head_t wait_send_payload_pending;
+	wait_queue_head_t wait_post_send;
 
 	/* Receive queue */
 	struct list_head receive_queue;
@@ -172,7 +153,6 @@ struct smbd_connection {
 
 	struct workqueue_struct *workqueue;
 	struct delayed_work idle_timer_work;
-	struct delayed_work send_immediate_work;
 
 	/* Memory pool for preallocating buffers */
 	/* request pool for RDMA send */
@@ -245,23 +225,24 @@ struct smbd_buffer_descriptor_v1 {
 	__le32 length;
 } __packed;
 
-/* Default maximum number of SGEs in a RDMA send/recv */
-#define SMBDIRECT_MAX_SGE	16
+/* Maximum number of SGEs used by smbdirect.c in any send work request */
+#define SMBDIRECT_MAX_SEND_SGE	6
+
 /* The context for a SMBD request */
 struct smbd_request {
 	struct smbd_connection *info;
 	struct ib_cqe cqe;
 
-	/* true if this request carries upper layer payload */
-	bool has_payload;
-
-	/* the SGE entries for this packet */
-	struct ib_sge sge[SMBDIRECT_MAX_SGE];
+	/* the SGE entries for this work request */
+	struct ib_sge sge[SMBDIRECT_MAX_SEND_SGE];
 	int num_sge;
 
 	/* SMBD packet header follows this structure */
 	u8 packet[];
 };
+
+/* Maximum number of SGEs used by smbdirect.c in any receive work request */
+#define SMBDIRECT_MAX_RECV_SGE	1
 
 /* The context for a SMBD response */
 struct smbd_response {
@@ -288,11 +269,12 @@ struct smbd_connection *smbd_get_connection(
 /* Reconnect SMBDirect session */
 int smbd_reconnect(struct TCP_Server_Info *server);
 /* Destroy SMBDirect session */
-void smbd_destroy(struct smbd_connection *info);
+void smbd_destroy(struct TCP_Server_Info *server);
 
 /* Interface for carrying upper layer I/O through send/recv */
 int smbd_recv(struct smbd_connection *info, struct msghdr *msg);
-int smbd_send(struct TCP_Server_Info *server, struct smb_rqst *rqst);
+int smbd_send(struct TCP_Server_Info *server,
+	int num_rqst, struct smb_rqst *rqst);
 
 enum mr_state {
 	MR_READY,
@@ -330,9 +312,9 @@ struct smbd_connection {};
 static inline void *smbd_get_connection(
 	struct TCP_Server_Info *server, struct sockaddr *dstaddr) {return NULL;}
 static inline int smbd_reconnect(struct TCP_Server_Info *server) {return -1; }
-static inline void smbd_destroy(struct smbd_connection *info) {}
+static inline void smbd_destroy(struct TCP_Server_Info *server) {}
 static inline int smbd_recv(struct smbd_connection *info, struct msghdr *msg) {return -1; }
-static inline int smbd_send(struct TCP_Server_Info *server, struct smb_rqst *rqst) {return -1; }
+static inline int smbd_send(struct TCP_Server_Info *server, int num_rqst, struct smb_rqst *rqst) {return -1; }
 #endif
 
 #endif

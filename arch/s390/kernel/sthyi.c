@@ -183,17 +183,19 @@ static void fill_hdr(struct sthyi_sctns *sctns)
 static void fill_stsi_mac(struct sthyi_sctns *sctns,
 			  struct sysinfo_1_1_1 *sysinfo)
 {
+	sclp_ocf_cpc_name_copy(sctns->mac.infmname);
+	if (*(u64 *)sctns->mac.infmname != 0)
+		sctns->mac.infmval1 |= MAC_NAME_VLD;
+
 	if (stsi(sysinfo, 1, 1, 1))
 		return;
-
-	sclp_ocf_cpc_name_copy(sctns->mac.infmname);
 
 	memcpy(sctns->mac.infmtype, sysinfo->type, sizeof(sctns->mac.infmtype));
 	memcpy(sctns->mac.infmmanu, sysinfo->manufacturer, sizeof(sctns->mac.infmmanu));
 	memcpy(sctns->mac.infmpman, sysinfo->plant, sizeof(sctns->mac.infmpman));
 	memcpy(sctns->mac.infmseq, sysinfo->sequence, sizeof(sctns->mac.infmseq));
 
-	sctns->mac.infmval1 |= MAC_ID_VLD | MAC_NAME_VLD;
+	sctns->mac.infmval1 |= MAC_ID_VLD;
 }
 
 static void fill_stsi_par(struct sthyi_sctns *sctns,
@@ -393,19 +395,18 @@ out:
 
 static int sthyi(u64 vaddr, u64 *rc)
 {
-	register u64 code asm("0") = 0;
-	register u64 addr asm("2") = vaddr;
-	register u64 rcode asm("3");
+	union register_pair r1 = { .even = 0, }; /* subcode */
+	union register_pair r2 = { .even = vaddr, };
 	int cc;
 
 	asm volatile(
-		".insn   rre,0xB2560000,%[code],%[addr]\n"
+		".insn   rre,0xB2560000,%[r1],%[r2]\n"
 		"ipm     %[cc]\n"
 		"srl     %[cc],28\n"
-		: [cc] "=d" (cc), "=d" (rcode)
-		: [code] "d" (code), [addr] "a" (addr)
+		: [cc] "=&d" (cc), [r2] "+&d" (r2.pair)
+		: [r1] "d" (r1.pair)
 		: "memory", "cc");
-	*rc = rcode;
+	*rc = r2.odd;
 	return cc;
 }
 

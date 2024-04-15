@@ -1,3 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Analog Devices FMC-IMAGEON
+ * https://wiki.analog.com/resources/fpga/xilinx/fmc/fmc-imageon
+ *
+ * hdl_project: <imageon/zed>
+ * board_revision: <>
+ *
+ * Copyright (C) 2016-2020 Analog Devices Inc.
+ */
 /dts-v1/;
 
 #include "zynq-zed.dtsi"
@@ -47,7 +57,7 @@
 
 						pd-gpios = <&pca9534 4 0>;
 
-						#sound-dai-cells = <0>;
+						#sound-dai-cells = <1>;
 
 						ports {
 							#address-cells = <1>;
@@ -112,7 +122,7 @@
 
 		hdmi_dma: dma@43000000 {
 			compatible = "adi,axi-dmac-1.00.a";
-			reg = <0x43000000 0x10000>;
+			reg = <0x43000000 0x1000>;
 			#dma-cells = <1>;
 			interrupts = <0 59 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clkc 16>;
@@ -135,7 +145,8 @@
 			compatible = "adi,axi-clkgen-2.00.a";
 			reg = <0x79000000 0x10000>;
 			#clock-cells = <0>;
-			clocks = <&clkc 16>;
+			clocks = <&clkc 15>, <&clkc 16>;
+			clock-names = "s_axi_aclk", "clkin1";
 		};
 
 		axi_hdmi_core: axi-hdmi-tx@70e00000 {
@@ -183,7 +194,7 @@
 
 		axi_dmac: dmac@43c20000 {
 			compatible = "adi,axi-dmac-1.00.a";
-			reg = <0x43c20000 0x10000>;
+			reg = <0x43c20000 0x1000>;
 			#dma-cells = <1>;
 			interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clkc 16>;
@@ -225,7 +236,7 @@
 				bitclock-master;
 			};
 			codec {
-				sound-dai = <&adv7511>;
+				sound-dai = <&adv7511 1>;
 			};
 		};
 	};

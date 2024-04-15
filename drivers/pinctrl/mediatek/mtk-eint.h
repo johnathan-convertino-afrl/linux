@@ -37,7 +37,12 @@ struct mtk_eint_hw {
 	u8		ports;
 	unsigned int	ap_num;
 	unsigned int	db_cnt;
+	const unsigned int *db_time;
 };
+
+extern const unsigned int debounce_time_mt2701[];
+extern const unsigned int debounce_time_mt6765[];
+extern const unsigned int debounce_time_mt6795[];
 
 struct mtk_eint;
 
@@ -62,6 +67,7 @@ struct mtk_eint {
 	/* Used to fit into various EINT device */
 	const struct mtk_eint_hw *hw;
 	const struct mtk_eint_regs *regs;
+	u16 num_db_time;
 
 	/* Used to fit into various pinctrl device */
 	void *pctl;
@@ -92,13 +98,13 @@ static inline int mtk_eint_do_resume(struct mtk_eint *eint)
 	return -EOPNOTSUPP;
 }
 
-int mtk_eint_set_debounce(struct mtk_eint *eint, unsigned long eint_n,
+static inline int mtk_eint_set_debounce(struct mtk_eint *eint, unsigned long eint_n,
 			  unsigned int debounce)
 {
 	return -EOPNOTSUPP;
 }
 
-int mtk_eint_find_irq(struct mtk_eint *eint, unsigned long eint_n)
+static inline int mtk_eint_find_irq(struct mtk_eint *eint, unsigned long eint_n)
 {
 	return -EOPNOTSUPP;
 }

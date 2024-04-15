@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: MIT */
 /******************************************************************************
  * memory.h
  *
@@ -243,12 +243,6 @@ DEFINE_GUEST_HANDLE_STRUCT(xen_memory_map);
  */
 #define XENMEM_machine_memory_map   10
 
-
-/*
- * Prevent the balloon driver from changing the memory reservation
- * during a driver critical region.
- */
-extern spinlock_t xen_reservation_lock;
 
 /*
  * Unmaps the page appearing at a particular GPFN from the specified guest's

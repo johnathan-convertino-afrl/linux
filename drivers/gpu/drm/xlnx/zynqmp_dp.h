@@ -1,19 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * ZynqMP DisplayPort Driver
  *
- *  Copyright (C) 2017 - 2018 Xilinx, Inc.
+ * Copyright (C) 2017 - 2020 Xilinx, Inc.
  *
- *  Author: Hyun Woo Kwon <hyun.kwon@xilinx.com>
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Authors:
+ * - Hyun Woo Kwon <hyun.kwon@xilinx.com>
+ * - Laurent Pinchart <laurent.pinchart@ideasonboard.com>
  */
 
 #ifndef _ZYNQMP_DP_H_
@@ -22,7 +15,7 @@
 struct zynqmp_dp;
 struct drm_display_mode;
 
-const int zynqmp_dp_set_color(struct zynqmp_dp *dp, const char *color);
+int zynqmp_dp_set_color(struct zynqmp_dp *dp, const char *color);
 void zynqmp_dp_enable_vblank(struct zynqmp_dp *dp);
 void zynqmp_dp_disable_vblank(struct zynqmp_dp *dp);
 void zynqmp_dp_encoder_mode_set_stream(struct zynqmp_dp *dp,

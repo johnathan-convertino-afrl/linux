@@ -1,20 +1,41 @@
 # SPDX-License-Identifier: GPL-2.0
-TEST_PROGS := ptrace-gpr ptrace-tm-gpr ptrace-tm-spd-gpr \
-              ptrace-tar ptrace-tm-tar ptrace-tm-spd-tar ptrace-vsx ptrace-tm-vsx \
-              ptrace-tm-spd-vsx ptrace-tm-spr ptrace-hwbreak ptrace-pkey core-pkey \
-              perf-hwbreak
+
+TM_TESTS := ptrace-tm-gpr
+TM_TESTS += ptrace-tm-spd-gpr
+TM_TESTS += ptrace-tm-spd-tar
+TM_TESTS += ptrace-tm-spd-vsx
+TM_TESTS += ptrace-tm-spr
+TM_TESTS += ptrace-tm-tar
+TM_TESTS += ptrace-tm-vsx
+
+TESTS_64 := $(TM_TESTS)
+TESTS_64 += core-pkey
+TESTS_64 += perf-hwbreak
+TESTS_64 += ptrace-hwbreak
+TESTS_64 += ptrace-perf-hwbreak
+TESTS_64 += ptrace-pkey
+TESTS_64 += ptrace-syscall
+TESTS_64 += ptrace-tar
+TESTS_64 += ptrace-vsx
+
+TESTS += ptrace-gpr
+
+TEST_GEN_PROGS := $(TESTS) $(TESTS_64)
+
+LOCAL_HDRS += $(patsubst %,$(selfdir)/powerpc/ptrace/%,$(wildcard *.h))
 
 top_srcdir = ../../../../..
 include ../../lib.mk
 
-all: $(TEST_PROGS)
+TM_TESTS := $(patsubst %,$(OUTPUT)/%,$(TM_TESTS))
+TESTS_64 := $(patsubst %,$(OUTPUT)/%,$(TESTS_64))
 
-CFLAGS += -m64 -I../../../../../usr/include -I../tm -mhtm -fno-pie
+$(TESTS_64): CFLAGS += -m64
+$(TM_TESTS): CFLAGS += -I../tm -mhtm
 
-ptrace-pkey core-pkey: child.h
-ptrace-pkey core-pkey: LDLIBS += -pthread
+CFLAGS += -I../../../../../usr/include -fno-pie
 
-$(TEST_PROGS): ../harness.c ../utils.c ../lib/reg.S ptrace.h
+$(OUTPUT)/ptrace-gpr: ptrace-gpr.S
+$(OUTPUT)/ptrace-pkey $(OUTPUT)/core-pkey: LDLIBS += -pthread
 
-clean:
-	rm -f $(TEST_PROGS) *.o
+$(TEST_GEN_PROGS): ../harness.c ../utils.c ../lib/reg.S

@@ -9,13 +9,13 @@
 #include <linux/init.h>
 #include <linux/export.h>
 #include <linux/memblock.h>
+#include <linux/pgtable.h>
+#include <linux/of.h>
 
 #include <asm/sections.h>
-#include <asm/prom.h>
 #include <asm/btext.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
-#include <asm/pgtable.h>
 #include <asm/io.h>
 #include <asm/processor.h>
 #include <asm/udbg.h>
@@ -26,7 +26,7 @@
 static void scrollscreen(void);
 #endif
 
-#define __force_data __attribute__((__section__(".data")))
+#define __force_data __section(".data")
 
 static int g_loc_X __force_data;
 static int g_loc_Y __force_data;
@@ -45,8 +45,7 @@ unsigned long disp_BAT[2] __initdata = {0, 0};
 
 static unsigned char vga_font[cmapsz];
 
-int boot_text_mapped __force_data = 0;
-int force_printk_to_btext = 0;
+static int boot_text_mapped __force_data;
 
 extern void rmci_on(void);
 extern void rmci_off(void);
@@ -74,7 +73,7 @@ static inline void rmci_maybe_off(void)
  * the display during identify_machine() and MMU_Init()
  *
  * The display is mapped to virtual address 0xD0000000, rather
- * than 1:1, because some some CHRP machines put the frame buffer
+ * than 1:1, because some CHRP machines put the frame buffer
  * in the region starting at 0xC0000000 (PAGE_OFFSET).
  * This mapping is temporary and will disappear as soon as the
  * setup done by MMU_Init() is applied.
@@ -95,19 +94,10 @@ void __init btext_prepare_BAT(void)
 		boot_text_mapped = 0;
 		return;
 	}
-	if (PVR_VER(mfspr(SPRN_PVR)) != 1) {
-		/* 603, 604, G3, G4, ... */
-		lowbits = addr & ~0xFF000000UL;
-		addr &= 0xFF000000UL;
-		disp_BAT[0] = vaddr | (BL_16M<<2) | 2;
-		disp_BAT[1] = addr | (_PAGE_NO_CACHE | _PAGE_GUARDED | BPP_RW);	
-	} else {
-		/* 601 */
-		lowbits = addr & ~0xFF800000UL;
-		addr &= 0xFF800000UL;
-		disp_BAT[0] = vaddr | (_PAGE_NO_CACHE | PP_RWXX) | 4;
-		disp_BAT[1] = addr | BL_8M | 0x40;
-	}
+	lowbits = addr & ~0xFF000000UL;
+	addr &= 0xFF000000UL;
+	disp_BAT[0] = vaddr | (BL_16M<<2) | 2;
+	disp_BAT[1] = addr | (_PAGE_NO_CACHE | _PAGE_GUARDED | BPP_RW);
 	logicalDisplayBase = (void *) (vaddr + lowbits);
 }
 #endif
@@ -163,14 +153,14 @@ void btext_map(void)
 	offset = ((unsigned long) dispDeviceBase) - base;
 	size = dispDeviceRowBytes * dispDeviceRect[3] + offset
 		+ dispDeviceRect[0];
-	vbase = __ioremap(base, size, pgprot_val(pgprot_noncached_wc(__pgprot(0))));
+	vbase = ioremap_wc(base, size);
 	if (!vbase)
 		return;
 	logicalDisplayBase = vbase + offset;
 	boot_text_mapped = 1;
 }
 
-static int btext_initialize(struct device_node *np)
+static int __init btext_initialize(struct device_node *np)
 {
 	unsigned int width, height, depth, pitch;
 	unsigned long address = 0;
@@ -232,20 +222,12 @@ static int btext_initialize(struct device_node *np)
 
 int __init btext_find_display(int allow_nonstdout)
 {
-	const char *name;
-	struct device_node *np = NULL; 
+	struct device_node *np = of_stdout;
 	int rc = -ENODEV;
 
-	name = of_get_property(of_chosen, "linux,stdout-path", NULL);
-	if (name != NULL) {
-		np = of_find_node_by_path(name);
-		if (np != NULL) {
-			if (strcmp(np->type, "display") != 0) {
-				printk("boot stdout isn't a display !\n");
-				of_node_put(np);
-				np = NULL;
-			}
-		}
+	if (!of_node_is_type(np, "display")) {
+		printk("boot stdout isn't a display !\n");
+		np = NULL;
 	}
 	if (np)
 		rc = btext_initialize(np);
@@ -258,8 +240,10 @@ int __init btext_find_display(int allow_nonstdout)
 			rc = btext_initialize(np);
 			printk("result: %d\n", rc);
 		}
-		if (rc == 0)
+		if (rc == 0) {
+			of_node_put(np);
 			break;
+		}
 	}
 	return rc;
 }
@@ -307,7 +291,7 @@ void btext_update_display(unsigned long phys, int width, int height,
 }
 EXPORT_SYMBOL(btext_update_display);
 
-void btext_clearscreen(void)
+void __init btext_clearscreen(void)
 {
 	unsigned int *base	= (unsigned int *)calc_base(0, 0);
 	unsigned long width 	= ((dispDeviceRect[2] - dispDeviceRect[0]) *
@@ -325,7 +309,7 @@ void btext_clearscreen(void)
 	rmci_maybe_off();
 }
 
-void btext_flushscreen(void)
+void __init btext_flushscreen(void)
 {
 	unsigned int *base	= (unsigned int *)calc_base(0, 0);
 	unsigned long width 	= ((dispDeviceRect[2] - dispDeviceRect[0]) *
@@ -344,7 +328,7 @@ void btext_flushscreen(void)
 	__asm__ __volatile__ ("sync" ::: "memory");
 }
 
-void btext_flushline(void)
+void __init btext_flushline(void)
 {
 	unsigned int *base	= (unsigned int *)calc_base(0, g_loc_Y << 4);
 	unsigned long width 	= ((dispDeviceRect[2] - dispDeviceRect[0]) *
@@ -559,7 +543,7 @@ void btext_drawstring(const char *c)
 		btext_drawchar(*c++);
 }
 
-void btext_drawtext(const char *c, unsigned int len)
+void __init btext_drawtext(const char *c, unsigned int len)
 {
 	if (!boot_text_mapped)
 		return;
@@ -567,7 +551,7 @@ void btext_drawtext(const char *c, unsigned int len)
 		btext_drawchar(*c++);
 }
 
-void btext_drawhex(unsigned long v)
+void __init btext_drawhex(unsigned long v)
 {
 	if (!boot_text_mapped)
 		return;

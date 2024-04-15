@@ -2,7 +2,7 @@
 /*
  * Analog Devices ADF4371 SPI Wideband Synthesizer driver
  *
- * Copyright 2019 Analog Devices Inc.
+ * Copyright 2019-2022 Analog Devices Inc.
  */
 #include <linux/bitfield.h>
 #include <linux/clk.h>
@@ -35,6 +35,10 @@
 #define ADF4371_SDO_ACT_R(x)		FIELD_PREP(ADF4371_SDO_ACT_R_MSK, x)
 #define ADF4371_RESET_CMD		0x81
 
+/* ADF4371_REG12 */
+#define ADF4371_EN_AUTOCAL_MSK		BIT(6)
+#define ADF4371_EN_AUTOCAL(x)		FIELD_PREP(ADF4371_EN_AUTOCAL_MSK, x)
+
 /* ADF4371_REG17 */
 #define ADF4371_FRAC2WORD_L_MSK		GENMASK(7, 1)
 #define ADF4371_FRAC2WORD_L(x)		FIELD_PREP(ADF4371_FRAC2WORD_L_MSK, x)
@@ -48,6 +52,8 @@
 /* ADF4371_REG1A */
 #define ADF4371_MOD2WORD_MSK		GENMASK(5, 0)
 #define ADF4371_MOD2WORD(x)		FIELD_PREP(ADF4371_MOD2WORD_MSK, x)
+#define ADF4371_PHASE_ADJ_MSK		BIT(6)
+#define ADF4371_PHASE_ADJ(x)		FIELD_PREP(ADF4371_PHASE_ADJ_MSK, x)
 
 /* ADF4371_REG1E */
 #define ADF4371_CP_CURRENT_MSK		GENMASK(7, 4)
@@ -76,12 +82,30 @@
 #define ADF4371_MUTE_LD(x)		FIELD_PREP(ADF4371_MUTE_LD_MSK, x)
 
 /* ADF4371_REG32 */
+#define ADF4371_ADC_CTS_CONV_MSK	BIT(4)
+#define ADF4371_ADC_CTS_CONV(x)		FIELD_PREP(ADF4371_ADC_CTS_CONV_MSK, x)
+#define ADF4371_ADC_CONVERSION_MSK	BIT(3)
+#define ADF4371_ADC_CONVERSION(x)	FIELD_PREP(ADF4371_ADC_CONVERSION_MSK, x)
+#define ADF4371_ADC_ENABLE_MSK		BIT(2)
+#define ADF4371_ADC_ENABLE(x)		FIELD_PREP(ADF4371_ADC_ENABLE_MSK, x)
 #define ADF4371_TIMEOUT_MSK		GENMASK(1, 0)
 #define ADF4371_TIMEOUT(x)		FIELD_PREP(ADF4371_TIMEOUT_MSK, x)
+
+/* ADF4371_REG33 */
+#define ADF4371_VCO_FSM_READBACK_MSK	GENMASK(7, 5)
+#define ADF4371_VCO_FSM_READBACK(x)	FIELD_PREP(ADF4371_VCO_FSM_READBACK_MSK, x)
 
 /* ADF4371_REG34 */
 #define ADF4371_VCO_ALC_TOUT_MSK	GENMASK(4, 0)
 #define ADF4371_VCO_ALC_TOUT(x)		FIELD_PREP(ADF4371_VCO_ALC_TOUT_MSK, x)
+
+/* ADF4371_REG72 */
+#define ADF4371_AUX_FREQ_SEL_MSK	BIT(6)
+#define ADF4371_AUX_FREQ_SEL(x)		FIELD_PREP(ADF4371_AUX_FREQ_SEL_MSK, x)
+
+/* ADF4371_REG73 */
+#define ADF4371_ADC_CLK_DISABLE_MSK	BIT(2)
+#define ADF4371_ADC_CLK_DISABLE(x)	FIELD_PREP(ADF4371_ADC_CLK_DISABLE_MSK, x)
 
 /* Specifications */
 #define ADF4371_MIN_VCO_FREQ		4000000000ULL /* 4000 MHz */
@@ -108,7 +132,8 @@ enum {
 	ADF4371_FREQ,
 	ADF4371_POWER_DOWN,
 	ADF4371_CHANNEL_NAME,
-	ADF4371_MUXOUT_ENABLE
+	ADF4371_MUXOUT_ENABLE,
+	ADF4371_AUX_FREQ_VCO_ENABLE,
 };
 
 enum {
@@ -178,7 +203,7 @@ static const struct reg_sequence adf4371_reg_defaults[] = {
 	{ ADF4371_REG(0x22), 0x00 },
 	{ ADF4371_REG(0x23), 0x00 },
 	{ ADF4371_REG(0x24), 0x80 },
-	{ ADF4371_REG(0x25), 0x07 },
+	{ ADF4371_REG(0x25), 0x03 },
 	{ ADF4371_REG(0x27), 0xC5 },
 	{ ADF4371_REG(0x28), 0x83 },
 	{ ADF4371_REG(0x2C), 0x44 },
@@ -199,6 +224,7 @@ static const struct reg_sequence adf4371_reg_defaults[] = {
 	{ ADF4371_REG(0x70), 0x03 },
 	{ ADF4371_REG(0x71), 0x60 },
 	{ ADF4371_REG(0x72), 0x32 },
+	{ ADF4371_REG(0x73), 0x00 },
 };
 
 static const struct regmap_config adf4371_regmap_config = {
@@ -266,7 +292,8 @@ struct adf4371_state {
 	bool muxout_1v8_en;
 	bool spi_3wire_en;
 	bool differential_ref_clk;
-	u8 buf[10] ____cacheline_aligned;
+	bool rf8aux_vco_en;
+	u8 buf[10] __aligned(IIO_DMA_MINALIGN);
 };
 
 static unsigned long long adf4371_pll_fract_n_get_rate(struct adf4371_state *st,
@@ -283,7 +310,8 @@ static unsigned long long adf4371_pll_fract_n_get_rate(struct adf4371_state *st,
 	do_div(tmp, st->mod2);
 	val += tmp + ADF4371_MODULUS1 / 2;
 
-	if (channel == ADF4371_CH_RF8 || channel == ADF4371_CH_RFAUX8)
+	if (channel == ADF4371_CH_RF8 ||
+		(channel == ADF4371_CH_RFAUX8 && !st->rf8aux_vco_en))
 		ref_div_sel = st->rf_div_sel;
 	else
 		ref_div_sel = 0;
@@ -335,8 +363,15 @@ static int adf4371_set_freq(struct adf4371_state *st, unsigned long long freq,
 	int ret;
 
 	switch (channel) {
-	case ADF4371_CH_RF8:
 	case ADF4371_CH_RFAUX8:
+		if (st->rf8aux_vco_en) {
+			if (ADF4371_CHECK_RANGE(freq, VCO_FREQ))
+				return -EINVAL;
+
+			break;
+		}
+		fallthrough;
+	case ADF4371_CH_RF8:
 		if (ADF4371_CHECK_RANGE(freq, OUT_RF8_FREQ))
 			return -EINVAL;
 
@@ -438,99 +473,6 @@ static int adf4371_channel_power_down(struct adf4371_state *st,
 	return regmap_write(st->regmap, reg, readval);
 }
 
-static ssize_t adf4371_read(struct iio_dev *indio_dev,
-			    uintptr_t private,
-			    const struct iio_chan_spec *chan,
-			    char *buf)
-{
-	struct adf4371_state *st = iio_priv(indio_dev);
-	unsigned long long val = 0;
-	unsigned int readval, reg, bit;
-	int ret;
-
-	switch ((u32)private) {
-	case ADF4371_FREQ:
-		val = adf4371_pll_fract_n_get_rate(st, chan->channel);
-		ret = regmap_read(st->regmap, ADF4371_REG(0x7C), &readval);
-		if (ret < 0)
-			break;
-
-		if (readval == 0x00) {
-			dev_dbg(&st->spi->dev, "PLL un-locked\n");
-			ret = -EBUSY;
-		}
-		break;
-	case ADF4371_POWER_DOWN:
-		reg = adf4371_pwrdown_ch[chan->channel].reg;
-		bit = adf4371_pwrdown_ch[chan->channel].bit;
-
-		ret = regmap_read(st->regmap, reg, &readval);
-		if (ret < 0)
-			break;
-
-		val = !(readval & BIT(bit));
-		break;
-	case ADF4371_CHANNEL_NAME:
-		return sprintf(buf, "%s\n", adf4371_ch_names[chan->channel]);
-	case ADF4371_MUXOUT_ENABLE:
-		return sprintf(buf, "%d\n", st->muxout_en);
-	default:
-		ret = -EINVAL;
-		val = 0;
-		break;
-	}
-
-	return ret < 0 ? ret : sprintf(buf, "%llu\n", val);
-}
-
-static ssize_t adf4371_write(struct iio_dev *indio_dev,
-			     uintptr_t private,
-			     const struct iio_chan_spec *chan,
-			     const char *buf, size_t len)
-{
-	struct adf4371_state *st = iio_priv(indio_dev);
-	unsigned long long freq;
-	bool power_down, muxout_en;
-	int ret;
-
-	mutex_lock(&st->lock);
-	switch ((u32)private) {
-	case ADF4371_FREQ:
-		ret = kstrtoull(buf, 10, &freq);
-		if (ret)
-			break;
-
-		ret = adf4371_set_freq(st, freq, chan->channel);
-		break;
-	case ADF4371_POWER_DOWN:
-		ret = kstrtobool(buf, &power_down);
-		if (ret)
-			break;
-
-		ret = adf4371_channel_power_down(st, chan->channel, power_down);
-		break;
-	case ADF4371_MUXOUT_ENABLE:
-		ret = kstrtobool(buf, &muxout_en);
-		if (ret)
-			break;
-
-		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x20),
-					 ADF4371_MUXOUT_EN_MSK,
-					 ADF4371_MUXOUT_EN(muxout_en));
-		if (ret < 0)
-			break;
-
-		st->muxout_en = muxout_en;
-		break;
-	default:
-		ret = -EINVAL;
-		break;
-	}
-	mutex_unlock(&st->lock);
-
-	return ret ? ret : len;
-}
-
 static int adf4371_get_muxout_mode(struct iio_dev *indio_dev,
 				   const struct iio_chan_spec *chan)
 {
@@ -565,6 +507,254 @@ static const struct iio_enum adf4371_muxout_mode_enum = {
 	.set = adf4371_set_muxout_mode,
 };
 
+static int adf4371_write_raw(struct iio_dev *indio_dev,
+			struct iio_chan_spec const *chan,
+			int val,
+			int val2,
+			long info)
+{
+	struct adf4371_state *st = iio_priv(indio_dev);
+	u64 val64;
+	int ret;
+
+	switch (info) {
+	case IIO_CHAN_INFO_PHASE:
+		val64 = (u64) val * (1 << 24);
+		do_div(val64, 360000UL);
+
+		st->buf[0] = val64 & 0xFF;
+		st->buf[1] = (val64 >> 8) & 0xFF;
+		st->buf[2] = (val64 >> 16) & 0xFF;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x1A),
+					ADF4371_PHASE_ADJ_MSK,
+					ADF4371_PHASE_ADJ(1));
+		if (ret < 0)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x12),
+					ADF4371_EN_AUTOCAL_MSK,
+					ADF4371_EN_AUTOCAL(0));
+		if (ret < 0)
+			break;
+
+		ret = regmap_write(st->regmap, ADF4371_REG(0x2B), 0x04);
+		if (ret < 0)
+			return ret;
+
+		ret = regmap_bulk_write(st->regmap,
+				ADF4371_REG(0x1B), st->buf, 3);
+		if (ret < 0)
+			return ret;
+
+		ret = regmap_write(st->regmap, ADF4371_REG(0x10), st->integer & 0xFF);
+		if (ret < 0)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x12),
+					ADF4371_EN_AUTOCAL_MSK,
+					ADF4371_EN_AUTOCAL(1));
+		if (ret < 0)
+			break;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int adf4371_read_raw(struct iio_dev *indio_dev,
+			struct iio_chan_spec const *chan,
+			int *val,
+			int *val2,
+			long info)
+{
+	struct adf4371_state *st = iio_priv(indio_dev);
+	unsigned int readval;
+	u64 val64;
+	int ret;
+
+	switch (info) {
+	case IIO_CHAN_INFO_PHASE:
+		ret = regmap_bulk_read(st->regmap,
+				       ADF4371_REG(0x1B), st->buf, 3);
+		if (ret < 0)
+			return ret;
+
+		val64 = st->buf[0] | st->buf[1] << 8 | st->buf[2] << 16;
+		val64 *= 360000ULL;
+		do_div(val64, 1 << 24);
+
+		*val = val64;
+
+		return IIO_VAL_INT;
+	case IIO_CHAN_INFO_PROCESSED:
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x73),
+					ADF4371_ADC_CLK_DISABLE_MSK,
+					ADF4371_ADC_CLK_DISABLE(0));
+		if (ret < 0)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x32),
+					ADF4371_ADC_ENABLE_MSK,
+					ADF4371_ADC_ENABLE(1));
+		if (ret < 0)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x32),
+					ADF4371_ADC_CONVERSION_MSK,
+					ADF4371_ADC_CONVERSION(1));
+		if (ret < 0)
+			break;
+
+		udelay(160); /* Wait 16 ADC cycles */
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x33),
+					ADF4371_VCO_FSM_READBACK_MSK,
+					ADF4371_VCO_FSM_READBACK(5));
+		if (ret < 0)
+			break;
+
+		ret = regmap_read(st->regmap, ADF4371_REG(0x6E), &readval);
+		if (ret < 0)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x32),
+					ADF4371_ADC_ENABLE_MSK |
+					ADF4371_ADC_CONVERSION_MSK, 0);
+		if (ret < 0)
+			break;
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x73),
+					ADF4371_ADC_CLK_DISABLE_MSK,
+					ADF4371_ADC_CLK_DISABLE(1));
+		if (ret < 0)
+			break;
+
+		*val = readval * 1000 - 83500;
+
+		return IIO_VAL_INT;
+	}
+
+	return -EINVAL;
+}
+
+static ssize_t adf4371_read(struct iio_dev *indio_dev,
+			    uintptr_t private,
+			    const struct iio_chan_spec *chan,
+			    char *buf)
+{
+	struct adf4371_state *st = iio_priv(indio_dev);
+	unsigned long long val = 0;
+	unsigned int readval, reg, bit;
+	int muxout_mode, ret = 0;
+
+	switch ((u32)private) {
+	case ADF4371_FREQ:
+		val = adf4371_pll_fract_n_get_rate(st, chan->channel);
+		muxout_mode = adf4371_get_muxout_mode(indio_dev, chan);
+		if (st->spi_3wire_en && muxout_mode == ADF4371_DIG_LOCK) {
+			ret = regmap_read(st->regmap, ADF4371_REG(0x7C), &readval);
+			if (ret < 0)
+				break;
+
+			if (readval == 0x00) {
+				dev_dbg(&st->spi->dev, "PLL un-locked\n");
+				ret = -EBUSY;
+			}
+		}
+		break;
+	case ADF4371_POWER_DOWN:
+		reg = adf4371_pwrdown_ch[chan->channel].reg;
+		bit = adf4371_pwrdown_ch[chan->channel].bit;
+
+		ret = regmap_read(st->regmap, reg, &readval);
+		if (ret < 0)
+			break;
+
+		val = !(readval & BIT(bit));
+		break;
+	case ADF4371_AUX_FREQ_VCO_ENABLE:
+		ret = regmap_read(st->regmap, ADF4371_REG(0x72), &readval);
+		if (ret < 0)
+			break;
+
+		val = !!(readval & ADF4371_AUX_FREQ_SEL_MSK);
+		break;
+	case ADF4371_CHANNEL_NAME:
+		return sprintf(buf, "%s\n", adf4371_ch_names[chan->channel]);
+	case ADF4371_MUXOUT_ENABLE:
+		return sprintf(buf, "%d\n", st->muxout_en);
+	default:
+		ret = -EINVAL;
+		val = 0;
+		break;
+	}
+
+	return ret < 0 ? ret : sprintf(buf, "%llu\n", val);
+}
+
+static ssize_t adf4371_write(struct iio_dev *indio_dev,
+			     uintptr_t private,
+			     const struct iio_chan_spec *chan,
+			     const char *buf, size_t len)
+{
+	struct adf4371_state *st = iio_priv(indio_dev);
+	unsigned long long freq;
+	bool power_down, muxout_en, enable;
+	int ret;
+
+	mutex_lock(&st->lock);
+	switch ((u32)private) {
+	case ADF4371_FREQ:
+		ret = kstrtoull(buf, 10, &freq);
+		if (ret)
+			break;
+
+		ret = adf4371_set_freq(st, freq, chan->channel);
+		break;
+	case ADF4371_POWER_DOWN:
+		ret = kstrtobool(buf, &power_down);
+		if (ret)
+			break;
+
+		ret = adf4371_channel_power_down(st, chan->channel, power_down);
+		break;
+	case ADF4371_MUXOUT_ENABLE:
+		ret = kstrtobool(buf, &muxout_en);
+		if (ret)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x20),
+					 ADF4371_AUX_FREQ_SEL_MSK,
+					 ADF4371_MUXOUT_EN(muxout_en));
+		if (ret < 0)
+			break;
+
+		st->muxout_en = muxout_en;
+		break;
+	case ADF4371_AUX_FREQ_VCO_ENABLE:
+		ret = kstrtobool(buf, &enable);
+		if (ret)
+			break;
+
+		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x72),
+					 ADF4371_AUX_FREQ_SEL_MSK,
+					 ADF4371_AUX_FREQ_SEL(enable));
+		if (ret < 0)
+			break;
+
+		st->rf8aux_vco_en = enable;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	mutex_unlock(&st->lock);
+
+	return ret ? ret : len;
+}
+
 #define _ADF4371_EXT_INFO(_name, _ident) { \
 		.name = _name, \
 		.read = adf4371_read, \
@@ -590,7 +780,7 @@ static const struct iio_chan_spec_ext_info adf4371_ext_info[] = {
 		.shared = IIO_SHARED_BY_ALL,
 	},
 	IIO_ENUM("muxout_mode", IIO_SHARED_BY_ALL, &adf4371_muxout_mode_enum),
-	IIO_ENUM_AVAILABLE("muxout_mode", &adf4371_muxout_mode_enum),
+	IIO_ENUM_AVAILABLE("muxout_mode", IIO_SHARED_BY_TYPE, &adf4371_muxout_mode_enum),
 	{ },
 };
 
@@ -600,11 +790,49 @@ static const struct iio_chan_spec_ext_info adf4371_ext_info[] = {
 		.channel = index, \
 		.ext_info = adf4371_ext_info, \
 		.indexed = 1, \
+		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_PHASE), \
+	}
+
+static const struct iio_chan_spec_ext_info adf4371_ext_info_aux[] = {
+	/*
+	 * Ideally we use IIO_CHAN_INFO_FREQUENCY, but there are
+	 * values > 2^32 in order to support the entire frequency range
+	 * in Hz. Using scale is a bit ugly.
+	 */
+	_ADF4371_EXT_INFO("frequency", ADF4371_FREQ),
+	_ADF4371_EXT_INFO("powerdown", ADF4371_POWER_DOWN),
+	_ADF4371_EXT_INFO("vco_output_enable", ADF4371_AUX_FREQ_VCO_ENABLE),
+	_ADF4371_EXT_INFO("name", ADF4371_CHANNEL_NAME),
+	{
+		.name = "muxout_enable",
+		.read = adf4371_read,
+		.write = adf4371_write,
+		.private = ADF4371_MUXOUT_ENABLE,
+		.shared = IIO_SHARED_BY_ALL,
+	},
+	IIO_ENUM("muxout_mode", IIO_SHARED_BY_ALL, &adf4371_muxout_mode_enum),
+	IIO_ENUM_AVAILABLE("muxout_mode", IIO_SHARED_BY_TYPE, &adf4371_muxout_mode_enum),
+	{ },
+};
+
+#define ADF4371_AUX_CHANNEL(index) { \
+		.type = IIO_ALTVOLTAGE, \
+		.output = 1, \
+		.channel = index, \
+		.ext_info = adf4371_ext_info_aux, \
+		.indexed = 1, \
+		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_PHASE), \
 	}
 
 static const struct iio_chan_spec adf4371_chan[] = {
+	{
+		.type = IIO_TEMP,
+		.indexed = 1,
+		.channel = 0,
+		.info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED),
+	},
 	ADF4371_CHANNEL(ADF4371_CH_RF8),
-	ADF4371_CHANNEL(ADF4371_CH_RFAUX8),
+	ADF4371_AUX_CHANNEL(ADF4371_CH_RFAUX8),
 	ADF4371_CHANNEL(ADF4371_CH_RF16),
 	ADF4371_CHANNEL(ADF4371_CH_RF32),
 };
@@ -635,6 +863,8 @@ static int adf4371_reg_access(struct iio_dev *indio_dev,
 
 static const struct iio_info adf4371_info = {
 	.debugfs_reg_access = &adf4371_reg_access,
+	.read_raw = &adf4371_read_raw,
+	.write_raw = adf4371_write_raw,
 };
 
 static int adf4371_channel_config(struct adf4371_state *st)
@@ -806,6 +1036,14 @@ static int adf4371_setup(struct adf4371_state *st)
 		st->fpfd = st->clkin_freq / st->ref_div_factor;
 	} while (st->fpfd > ADF4371_MAX_FREQ_PFD);
 
+	/* Calculate ADC_CLK_DIV */
+	tmp = DIV_ROUND_UP((st->fpfd / 100000) - 2, 4);
+	tmp = clamp(tmp, 0U, 255U);
+
+	ret = regmap_write(st->regmap, ADF4371_REG(0x35), tmp);
+	if (ret < 0)
+		return ret;
+
 	/* Calculate Timeouts */
 	vco_band_div = DIV_ROUND_UP(st->fpfd, 2400000U);
 
@@ -830,16 +1068,9 @@ static int adf4371_setup(struct adf4371_state *st)
 
 	ret = regmap_bulk_write(st->regmap, ADF4371_REG(0x30), st->buf, 5);
 	if (ret < 0)
-		return 0;
+		return ret;
 
 	return adf4371_channel_config(st);
-}
-
-static void adf4371_clk_disable(void *data)
-{
-	struct adf4371_state *st = data;
-
-	clk_disable_unprepare(st->clkin);
 }
 
 static int adf4371_parse_dt(struct adf4371_state *st)
@@ -1011,10 +1242,6 @@ static int adf4371_probe(struct spi_device *spi)
 	struct regmap *regmap;
 	int ret;
 
-	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
-	if (!indio_dev)
-		return -ENOMEM;
-
 	regmap = devm_regmap_init_spi(spi, &adf4371_regmap_config);
 	if (IS_ERR(regmap)) {
 		dev_err(&spi->dev, "Error initializing spi regmap: %ld\n",
@@ -1022,15 +1249,31 @@ static int adf4371_probe(struct spi_device *spi)
 		return PTR_ERR(regmap);
 	}
 
+	/*
+	 * The device comes out of reset with a few power consuming blocks turned on
+	 * this option allows the user to power down the chip in case it's not used in
+	 * a certain configuration
+	 */
+
+	if(device_property_read_bool(&spi->dev, "adi,chip-powerdown-and-exit-enable")) {
+		regmap_write(regmap, ADF4371_REG(0x25), 0); /* Power-Down all Outputs */
+		regmap_write(regmap, ADF4371_REG(0x73), 6); /* Disable ADC Clock, Power-Down N Divider */
+		regmap_write(regmap, ADF4371_REG(0x1E), 4); /* Power-Down */
+
+		return 0;
+	}
+
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
+	if (!indio_dev)
+		return -ENOMEM;
+
 	st = iio_priv(indio_dev);
 	spi_set_drvdata(spi, indio_dev);
-	st->regmap = regmap;
 	st->spi = spi;
+	st->regmap = regmap;
 	mutex_init(&st->lock);
 
 	st->chip_info = &adf4371_chip_info[id->driver_data];
-	indio_dev->dev.parent = &spi->dev;
-
 	if (spi->dev.of_node)
 		indio_dev->name = spi->dev.of_node->name;
 	else
@@ -1039,19 +1282,11 @@ static int adf4371_probe(struct spi_device *spi)
 	indio_dev->info = &adf4371_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->channels = st->chip_info->channels;
-	indio_dev->num_channels = st->chip_info->num_channels;
+	indio_dev->num_channels = st->chip_info->num_channels + 1; /* Include IIO_TEMP */
 
-	st->clkin = devm_clk_get(&spi->dev, "clkin");
+	st->clkin = devm_clk_get_enabled(&spi->dev, "clkin");
 	if (IS_ERR(st->clkin))
 		return PTR_ERR(st->clkin);
-
-	ret = clk_prepare_enable(st->clkin);
-	if (ret < 0)
-		return ret;
-
-	ret = devm_add_action_or_reset(&spi->dev, adf4371_clk_disable, st);
-	if (ret)
-		return ret;
 
 	st->clkin_freq = clk_get_rate(st->clkin);
 

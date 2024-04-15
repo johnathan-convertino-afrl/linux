@@ -1,1 +1,2 @@
-#define CONFIG_RADIX_TREE_MULTIORDER 1
+#include "bit-length.h"
+#define CONFIG_XARRAY_MULTI 1

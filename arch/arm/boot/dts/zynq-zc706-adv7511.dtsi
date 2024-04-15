@@ -42,7 +42,7 @@
 				    #size-cells = <0>;
 				    reg = <1>;
 
-				    adv7511: adv7511 {
+				    adv7511: adv7511@39 {
 						compatible = "adi,adv7511";
 						reg = <0x39>, <0x3f>;
 						reg-names = "primary", "edid";
@@ -52,7 +52,7 @@
 						adi,input-clock = "1x";
 						adi,clock-delay = <0>;
 
-						#sound-dai-cells = <0>;
+						#sound-dai-cells = <1>;
 
 						ports {
 							#address-cells = <1>;
@@ -98,7 +98,7 @@
 					#address-cells = <1>;
 					#size-cells = <0>;
 					reg = <4>;
-					rtc@54 {
+					rtc@51 {
 						compatible = "nxp,pcf8563";
 						reg = <0x51>;
 					};
@@ -108,7 +108,7 @@
 
 		hdmi_dma: dma@43000000 {
 			compatible = "adi,axi-dmac-1.00.a";
-			reg = <0x43000000 0x10000>;
+			reg = <0x43000000 0x1000>;
 			#dma-cells = <1>;
 			interrupts = <0 59 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clkc 16>;
@@ -131,7 +131,8 @@
 			compatible = "adi,axi-clkgen-2.00.a";
 			reg = <0x79000000 0x10000>;
 			#clock-cells = <0>;
-			clocks = <&clkc 16>;
+			clocks = <&clkc 15>, <&clkc 16>;
+			clock-names = "s_axi_aclk", "clkin1";
 		};
 
 		axi_hdmi@70e00000 {
@@ -189,7 +190,7 @@
 				bitclock-master;
 			};
 			codec {
-				sound-dai = <&adv7511>;
+				sound-dai = <&adv7511 1>;
 			};
 		};
 	};

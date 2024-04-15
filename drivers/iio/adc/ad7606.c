@@ -8,9 +8,11 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/err.h>
+#include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -24,8 +26,6 @@
 #include <linux/iio/triggered_buffer.h>
 #include <linux/iio/trigger_consumer.h>
 
-#include <linux/spi/spi.h>
-
 #include "ad7606.h"
 
 /*
@@ -36,7 +36,8 @@ static const unsigned int ad7606_scale_avail[2] = {
 	152588, 305176
 };
 
-static const unsigned int ad7606B_scale_avail[3] = {
+
+static const unsigned int ad7616_sw_scale_avail[3] = {
 	76293, 152588, 305176
 };
 
@@ -82,6 +83,7 @@ err_unlock:
 	mutex_unlock(&st->lock);
 	return ret;
 }
+
 static int ad7606_read_samples(struct ad7606_state *st)
 {
 	unsigned int num = st->chip_info->num_channels - 1;
@@ -235,14 +237,12 @@ static int ad7606_write_scale_hw(struct iio_dev *indio_dev, int ch, int val)
 static int ad7606_write_os_hw(struct iio_dev *indio_dev, int val)
 {
 	struct ad7606_state *st = iio_priv(indio_dev);
-	int values[3];
+	DECLARE_BITMAP(values, 3);
 
-	values[0] = (val >> 0) & 1;
-	values[1] = (val >> 1) & 1;
-	values[2] = (val >> 2) & 1;
+	values[0] = val;
 
-	gpiod_set_array_value(ARRAY_SIZE(values),
-			      st->gpio_os->desc, values);
+	gpiod_set_array_value(ARRAY_SIZE(values), st->gpio_os->desc,
+			      st->gpio_os->info, values);
 
 	/* AD7616 requires a reset to update value */
 	if (st->chip_info->os_req_reset)
@@ -278,7 +278,6 @@ static int ad7606_write_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_OVERSAMPLING_RATIO:
 		if (val2)
 			return -EINVAL;
-
 		i = find_closest(val, st->oversampling_avail,
 				 st->num_os_ratios);
 		mutex_lock(&st->lock);
@@ -615,7 +614,6 @@ int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 	if (ret)
 		return ret;
 
-	indio_dev->dev.parent = dev;
 	if (st->gpio_os) {
 		if (st->gpio_range)
 			indio_dev->info = &ad7606_info_os_and_range;
@@ -627,11 +625,12 @@ int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 		else
 			indio_dev->info = &ad7606_info_no_os_or_range;
 	}
-
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->name = name;
 	indio_dev->channels = st->chip_info->channels;
 	indio_dev->num_channels = st->chip_info->num_channels;
+
+	init_completion(&st->completion);
 
 	ret = ad7606_reset(st);
 	if (ret)
@@ -651,27 +650,26 @@ int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 							 "adi,sw-mode");
 
 	if (st->sw_mode_en) {
-		indio_dev->info = &ad7606_info_os_range_and_debug;
-
 		/* Scale of 0.076293 is only available in sw mode */
-		st->scale_avail = ad7606B_scale_avail;
-		st->num_scales = ARRAY_SIZE(ad7606B_scale_avail);
+		st->scale_avail = ad7616_sw_scale_avail;
+		st->num_scales = ARRAY_SIZE(ad7616_sw_scale_avail);
 
 		/* After reset, in software mode, ±10 V is set by default */
 		memset32(st->range, 2, ARRAY_SIZE(st->range));
+		indio_dev->info = &ad7606_info_os_range_and_debug;
 
 		ret = st->bops->sw_mode_config(indio_dev);
+		if (ret < 0)
+			return ret;
 	}
 
-	init_completion(&st->completion);
-
 	st->trig = devm_iio_trigger_alloc(dev, "%s-dev%d",
-					  indio_dev->name, indio_dev->id);
+					  indio_dev->name,
+					  iio_device_id(indio_dev));
 	if (!st->trig)
 		return -ENOMEM;
 
 	st->trig->ops = &ad7606_trigger_ops;
-	st->trig->dev.parent = dev;
 	iio_trigger_set_drvdata(st->trig, indio_dev);
 	ret = devm_iio_trigger_register(dev, st->trig);
 	if (ret)
@@ -696,7 +694,7 @@ int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 
 	return devm_iio_device_register(dev, indio_dev);
 }
-EXPORT_SYMBOL_GPL(ad7606_probe);
+EXPORT_SYMBOL_NS_GPL(ad7606_probe, IIO_AD7606);
 
 #ifdef CONFIG_PM_SLEEP
 
@@ -728,10 +726,10 @@ static int ad7606_resume(struct device *dev)
 }
 
 SIMPLE_DEV_PM_OPS(ad7606_pm_ops, ad7606_suspend, ad7606_resume);
-EXPORT_SYMBOL_GPL(ad7606_pm_ops);
+EXPORT_SYMBOL_NS_GPL(ad7606_pm_ops, IIO_AD7606);
 
 #endif
 
-MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
+MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
 MODULE_DESCRIPTION("Analog Devices AD7606 ADC");
 MODULE_LICENSE("GPL v2");

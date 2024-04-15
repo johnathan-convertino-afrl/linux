@@ -28,18 +28,14 @@ properties:
       maximum: 0x4F
 
   avcc-supply:
-    description:
-      Phandle to the Avcc power supply.
-
-  adi,connected-adm1266:
     description: |
-      Represents other ADM1266 devices cascaded through the IDB. Can be
-      cascaded with maximum 15 other adm1266s.
-    $ref: "/schemas/types.yaml#/definitions/phandle"
+      Phandle to the Avcc power supply.
 
 required:
   - compatible
   - reg
+
+additionalProperties: false
 
 examples:
   - |
@@ -50,8 +46,6 @@ examples:
         adm1266@40 {
                 compatible = "adi,adm1266";
                 reg = <0x40>;
-                #address-cells = <1>;
-                #size-cells = <0>;
         };
     };
 ...

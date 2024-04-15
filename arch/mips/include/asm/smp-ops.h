@@ -29,9 +29,13 @@ struct plat_smp_ops {
 	int (*boot_secondary)(int cpu, struct task_struct *idle);
 	void (*smp_setup)(void);
 	void (*prepare_cpus)(unsigned int max_cpus);
+	void (*prepare_boot_cpu)(void);
 #ifdef CONFIG_HOTPLUG_CPU
 	int (*cpu_disable)(void);
 	void (*cpu_die)(unsigned int cpu);
+#endif
+#ifdef CONFIG_KEXEC
+	void (*kexec_nonboot_cpu)(void);
 #endif
 };
 
@@ -96,6 +100,9 @@ static inline int register_vsmp_smp_ops(void)
 {
 #ifdef CONFIG_MIPS_MT_SMP
 	extern const struct plat_smp_ops vsmp_smp_ops;
+
+	if (!cpu_has_mipsmt)
+		return -ENODEV;
 
 	register_smp_ops(&vsmp_smp_ops);
 
