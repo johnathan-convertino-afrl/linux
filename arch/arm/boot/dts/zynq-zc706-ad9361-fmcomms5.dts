@@ -13,16 +13,6 @@
 #include "zynq-zc706.dtsi"
 
 / {
-  i2c_mux {
-    fmc_i2c: i2c@5 { /* HPC */
-      #size-cells = <0>;
-      #address-cells = <1>;
-      reg = <5>;
-    };
-  };
-};
-
-/ {
   fpga_axi {
       fmc_i2c: i2c@41620000 {
       compatible = "xlnx,axi-iic-1.01.b", "xlnx,xps-iic-2.00.a";
