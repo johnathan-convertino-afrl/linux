@@ -128,7 +128,7 @@
 #define fmc_spi sys_spi
 #define fmc_i2c i2c0
 
-#include "adi-fmcomms2.dtsi"
+#include "adi-fmcomms5.dtsi"
 
 &adc0_ad9361 {
   /delete-property/ spi-cpha;
