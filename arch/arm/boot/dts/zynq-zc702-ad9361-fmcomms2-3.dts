@@ -26,6 +26,11 @@
 
 / {
   fpga_axi {
+    compatible = "simple-bus";
+    #address-cells = <0x1>;
+    #size-cells = <0x1>;
+    ranges;
+
     fmc_i2c: i2c@41620000 {
       compatible = "xlnx,axi-iic-1.01.b", "xlnx,xps-iic-2.00.a";
       reg = <0x41620000 0x10000>;
@@ -36,6 +41,28 @@
 
       #size-cells = <0>;
       #address-cells = <1>;
+      mux@74 {
+        compatible = "pca9548";
+        reg = <0x74>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        i2c@4 {
+          #size-cells = <0>;
+          #address-cells = <1>;
+          reg = <4>;
+          rtc@51 {
+            compatible = "rtc8564";
+            reg = <0x51>;
+          };
+        };
+
+        fmc_i2c: i2c@5 {
+          #size-cells = <0>;
+          #address-cells = <1>;
+          reg = <5>;
+        };
+      };
     };
 
     rx_dma: dma@7c400000 {

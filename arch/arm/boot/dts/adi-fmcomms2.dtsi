@@ -25,7 +25,7 @@
 		clock-output-names = "rx_sampl_clk", "tx_sampl_clk";
 		#clock-cells = <1>;
 
-		//adi,debug-mode-enable;
+		adi,debug-mode-enable;
 		/* Digital Interface Control */
 
 		 /* adi,digital-interface-tune-skip-mode:
