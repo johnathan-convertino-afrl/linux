@@ -31,7 +31,7 @@
     #size-cells = <0x1>;
     ranges;
 
-    fmc_i2c: i2c@41620000 {
+    main_i2c: i2c@41620000 {
       compatible = "xlnx,axi-iic-1.01.b", "xlnx,xps-iic-2.00.a";
       reg = <0x41620000 0x10000>;
       interrupt-parent = <&intc>;
