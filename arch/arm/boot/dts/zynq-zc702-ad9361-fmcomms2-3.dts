@@ -41,6 +41,7 @@
 
       #size-cells = <0>;
       #address-cells = <1>;
+
       mux@74 {
         compatible = "pca9548";
         reg = <0x74>;

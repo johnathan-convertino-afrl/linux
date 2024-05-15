@@ -15,6 +15,10 @@
 
 / {
   fpga_axi  {
+    compatible = "simple-bus";
+    #address-cells = <0x1>;
+    #size-cells = <0x1>;
+    ranges;
 
     main_i2c: i2c@41620000 {
       compatible = "xlnx,axi-iic-1.01.b", "xlnx,xps-iic-2.00.a";
