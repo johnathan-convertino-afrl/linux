@@ -101,7 +101,7 @@
 						adi,source-bus-width = <64>;
 						adi,source-bus-type = <0>;
 						adi,destination-bus-width = <64>;
-						adi,destination-bus-type = <1>;
+						adi,destination-bus-type = <2>;
 					};
 				};
 			};
