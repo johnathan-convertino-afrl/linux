@@ -9,10 +9,7 @@
 #define _LINUX_FPGA_MGR_H
 
 #include <linux/mutex.h>
-#include <linux/miscdevice.h>
 #include <linux/platform_device.h>
-
-#define ENCRYPTED_KEY_LEN	64 /* Bytes */
 
 struct fpga_manager;
 struct sg_table;
@@ -69,27 +66,21 @@ enum fpga_mgr_states {
  *
  * %FPGA_MGR_EXTERNAL_CONFIG: FPGA has been configured prior to Linux booting
  *
- * %FPGA_MGR_ENCRYPTED_BITSTREAM: indicates bitstream is encrypted with
- *				  device key
+ * %FPGA_MGR_ENCRYPTED_BITSTREAM: indicates bitstream is encrypted
  *
  * %FPGA_MGR_BITSTREAM_LSB_FIRST: SPI bitstream bit order is LSB first
  *
  * %FPGA_MGR_COMPRESSED_BITSTREAM: FPGA bitstream is compressed
  *
  * %FPGA_MGR_BITSTREAM_AUTHENTICATE: do FPGA bitstream authentication only
- *					  user key
- * %FPGA_MGR_DDR_MEM_AUTH_BITSTREAM: do bitstream authentication using DDR
- *				     memory if supported
- * %FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM: do bitstream authentication using secure
- *					memory if supported
  */
 #define FPGA_MGR_PARTIAL_RECONFIG	BIT(0)
 #define FPGA_MGR_EXTERNAL_CONFIG	BIT(1)
 #define FPGA_MGR_ENCRYPTED_BITSTREAM	BIT(2)
 #define FPGA_MGR_BITSTREAM_LSB_FIRST	BIT(3)
 #define FPGA_MGR_COMPRESSED_BITSTREAM	BIT(4)
-#define FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM	BIT(5)
 #define FPGA_MGR_BITSTREAM_AUTHENTICATE	BIT(5)
+#define FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM	BIT(5)
 #define FPGA_MGR_DDR_MEM_AUTH_BITSTREAM		BIT(6)
 #define FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM	BIT(7)
 #define FPGA_MGR_CONFIG_DMA_BUF			BIT(8)
@@ -102,7 +93,6 @@ enum fpga_mgr_states {
  * @config_complete_timeout_us: maximum time for FPGA to switch to operating
  *	   status in the write_complete op.
  * @firmware_name: name of FPGA image firmware file
- * @key: key value useful for Encrypted Bitstream loading to read the userkey
  * @sgt: scatter/gather table containing FPGA image
  * @buf: contiguous buffer containing FPGA image
  * @count: size of buf
@@ -119,7 +109,6 @@ struct fpga_image_info {
 	u32 disable_timeout_us;
 	u32 config_complete_timeout_us;
 	char *firmware_name;
-	char key[ENCRYPTED_KEY_LEN];
 	struct sg_table *sgt;
 	const char *buf;
 	size_t count;
@@ -178,7 +167,6 @@ struct fpga_manager_info {
  * @write: write count bytes of configuration data to the FPGA
  * @write_sg: write the scatter list of configuration data to the FPGA
  * @write_complete: set FPGA to operating state after writing is done
- * @read: optional: read FPGA configuration information
  * @fpga_remove: optional: Set FPGA into a specific state during driver remove
  * @groups: optional attribute groups.
  *
@@ -201,7 +189,6 @@ struct fpga_manager_ops {
 	int (*write_sg)(struct fpga_manager *mgr, struct sg_table *sgt);
 	int (*write_complete)(struct fpga_manager *mgr,
 			      struct fpga_image_info *info);
-	int (*read)(struct fpga_manager *mgr, struct seq_file *s);
 	void (*fpga_remove)(struct fpga_manager *mgr);
 	const struct attribute_group **groups;
 };
@@ -212,36 +199,20 @@ struct fpga_manager_ops {
 #define FPGA_MGR_STATUS_INCOMPATIBLE_IMAGE_ERR	BIT(2)
 #define FPGA_MGR_STATUS_IP_PROTOCOL_ERR		BIT(3)
 #define FPGA_MGR_STATUS_FIFO_OVERFLOW_ERR	BIT(4)
-#define FPGA_MGR_STATUS_SECURITY_ERR		BIT(5)
-#define FPGA_MGR_STATUS_DEVICE_INIT_ERR		BIT(6)
-#define FPGA_MGR_STATUS_SIGNAL_ERR		BIT(7)
-#define FPGA_MGR_STATUS_HIGH_Z_STATE_ERR	BIT(8)
-#define FPGA_MGR_STATUS_EOS_ERR			BIT(9)
-#define FPGA_MGR_STATUS_FIRMWARE_REQ_ERR	BIT(10)
 
 /**
  * struct fpga_manager - fpga manager structure
  * @name: name of low level fpga manager
- * @flags: flags determines the type of Bitstream
- * @key: key value useful for Encrypted Bitstream loading to read the userkey
  * @dev: fpga manager device
- * @miscdev: information about character device node
- * @dmabuf: shared dma buffer
  * @ref_mutex: only allows one reference to fpga manager
  * @state: state of fpga manager
  * @compat_id: FPGA manager id for compatibility check.
  * @mops: pointer to struct of fpga manager ops
  * @priv: low level driver private date
- * @err: low level driver error code
- * @dir: debugfs image directory
  */
 struct fpga_manager {
 	const char *name;
-	unsigned long flags;
-	char key[ENCRYPTED_KEY_LEN + 1];
 	struct device dev;
-	struct miscdevice miscdev;
-	struct dma_buf *dmabuf;
 	struct mutex ref_mutex;
 	enum fpga_mgr_states state;
 	struct fpga_compat_id *compat_id;
@@ -249,7 +220,6 @@ struct fpga_manager {
 	void *priv;
 #if IS_ENABLED(CONFIG_FPGA_MGR_DEBUG_FS)
 	void *debugfs;
-#endif
 #endif
 };
 
@@ -283,7 +253,5 @@ devm_fpga_mgr_register_full(struct device *parent, const struct fpga_manager_inf
 struct fpga_manager *
 devm_fpga_mgr_register(struct device *parent, const char *name,
 		       const struct fpga_manager_ops *mops, void *priv);
-
-#define FPGA_IOCTL_LOAD_DMA_BUFF	_IOWR('R', 1, __u32)
 
 #endif /*_LINUX_FPGA_MGR_H */
