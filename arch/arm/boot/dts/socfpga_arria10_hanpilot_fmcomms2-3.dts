@@ -131,26 +131,26 @@
         #size-cells = <0x0>;
       };
 
-      cf_ad9361_adc_core_0: cf-ad9361-lpc@20000 {
+      cf_ad9361_adc_core_0: cf-ad9361-lpc@40000 {
         compatible = "adi,axi-ad9361-6.00.a";
-        reg = <0x79020000 0x6000>;
+        reg = <0x00040000 0x6000>;
         dmas = <&adc_dma 0>;
         dma-names = "rx";
         spibus-connected = <&adc0_ad9361>;
       };
 
-      cf_ad9361_dac_core_0: cf-ad9361-dds-core-lpc@24000  {
+      cf_ad9361_dac_core_0: cf-ad9361-dds-core-lpc@44000  {
         compatible = "adi,axi-ad9361-dds-6.00.a";
-        reg = <0x79024000 0x6000>;
+        reg = <0x00044000 0x6000>;
         dmas = <&dac_dma 0>;
         dma-names = "tx";
         clocks = <&adc0_ad9361 13>;
         clock-names = "sampl_clk";
       };
 
-      adc_dma: adc_dma@40000 {
+      adc_dma: adc_dma@50000 {
         compatible = "adi,axi-dmac-1.00.a";
-        reg = <0x00040000 0x1000>;
+        reg = <0x00050000 0x1000>;
         interrupt-parent = <&intc>;
         interrupts = <0 21 IRQ_TYPE_LEVEL_HIGH>;
         #dma-cells = <1>;
@@ -169,9 +169,9 @@
         };
       };
 
-      dac_dma: dac_dma@44000 {
+      dac_dma: dac_dma@54000 {
         compatible = "adi,axi-dmac-1.00.a";
-        reg = <0x00044000 0x1000>;
+        reg = <0x00054000 0x1000>;
         interrupt-parent = <&intc>;
         interrupts = <0 22 IRQ_TYPE_LEVEL_HIGH>;
         #dma-cells = <1>;
