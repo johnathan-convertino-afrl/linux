@@ -221,14 +221,14 @@
 /delete-node/ &eeprom;
 
 &fmc_i2c {
-	ad7291: ad7291@20 {
-		compatible = "adi,ad7291";
-		reg = <0x20>;
-	};
+  ad7291: ad7291@20 {
+    compatible = "adi,ad7291";
+    reg = <0x20>;
+  };
 
-	eeprom: eeprom@53 {
-		compatible = "at24,24c02";
-		reg = <0x53>;
-	};
+  eeprom: eeprom@53 {
+    compatible = "at24,24c02";
+    reg = <0x53>;
+  };
 };
 
