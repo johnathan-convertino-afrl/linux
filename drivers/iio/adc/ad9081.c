@@ -4560,6 +4560,7 @@ static int ad9081_setup_chip_info_tbl(struct ad9081_phy *phy,
 
 	switch (m) {
 	case 0:
+	case 1:
 	case 2:
 	case 4:
 	case 6:
@@ -5300,9 +5301,9 @@ static int ad9081_probe(struct spi_device *spi)
 		if (ret)
 			break;
 		conv->chip_info = &phy->chip_info;
-		ret = ad9081_setup_chip_info_tbl(phy, true, true,
-			// (phy->adc_dcm[0] == 1) ? false : true,
-			// (phy->tx_main_interp == 1) ? false : true,
+		ret = ad9081_setup_chip_info_tbl(phy,
+			 (phy->adc_dcm[0] == 1) ? false : true,
+			 (phy->tx_main_interp == 1) ? false : true,
 			jesd204_dev_is_top(jdev));
 		if (ret)
 			break;

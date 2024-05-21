@@ -90,7 +90,7 @@
 	};
 
 	axi_spi_engine: spi@44a00000 {
-		compatible = "adi,axi-spi-engine-1.00.a";
+		compatible = "adi-ex,axi-spi-engine-1.00.a";
 		reg = <0x44a00000 0x1FF>;
 		interrupt-parent = <&intc>;
 		interrupts = <0 56 IRQ_TYPE_LEVEL_HIGH>;
@@ -110,7 +110,7 @@
 			vref-supply = <&vref>;
 			spi-max-frequency = <80000000>;
 			reset-gpios = <&gpio0 86 GPIO_ACTIVE_LOW>;
-			adi,lane-mode = <0>;
+			adi,lane-mode = <1>;
 			adi,clock-mode = <0>;
 			adi,out-data-mode = <0>;
 			adi,spi-trigger;

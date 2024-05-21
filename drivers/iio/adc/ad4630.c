@@ -5,6 +5,7 @@
  * Copyright 2022 Analog Devices Inc.
  */
 #include <linux/bitfield.h>
+#include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
@@ -20,6 +21,7 @@
 #include <linux/limits.h>
 #include <linux/kconfig.h>
 #include <linux/kernel.h>
+#include <linux/log2.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/property.h>
@@ -28,7 +30,7 @@
 #include <linux/regmap.h>
 #include <linux/sysfs.h>
 #include <linux/spi/spi.h>
-#include <linux/spi/spi-engine.h>
+#include <linux/spi/spi-engine-ex.h>
 #include <linux/util_macros.h>
 #include <linux/units.h>
 #include <linux/types.h>
@@ -134,8 +136,11 @@ enum {
 
 enum {
 	ID_AD4030_24,
+	ID_AD4032_24,
 	ID_AD4630_16,
+	ID_AD4632_16,
 	ID_AD4630_24,
+	ID_AD4632_24,
 	ID_ADAQ4216,
 	ID_ADAQ4220,
 	ID_ADAQ4224,
@@ -613,11 +618,11 @@ static int ad4630_set_avg_frame_len(struct iio_dev *dev,
 	if (ret)
 		return ret;
 
-	ret = regmap_write(st->regmap, AD4630_REG_AVG, avg_len);
+	ret = regmap_write(st->regmap, AD4630_REG_AVG, avg_len + 1);
 	if (ret)
 		goto out_error;
 
-	ret = ad4630_update_sample_fetch_trigger(st, avg_len);
+	ret = ad4630_update_sample_fetch_trigger(st, avg_len + 1);
 out_error:
 	iio_device_release_direct_mode(dev);
 
@@ -640,7 +645,7 @@ static int ad4630_get_avg_frame_len(struct iio_dev *dev,
 	if (ret)
 		return ret;
 
-	return avg_len;
+	return avg_len - 1;
 }
 
 static int ad4630_sampling_enable(const struct ad4630_state *st, bool enable)
@@ -719,9 +724,13 @@ static int ad4630_buffer_preenable(struct iio_dev *indio_dev)
 	if (ret)
 		goto out_error;
 
+	ret = spi_optimize_message(st->spi, &st->offload_msg);
+	if (ret < 0)
+		goto out_error;
+
 	spi_bus_lock(st->spi->master);
-	spi_engine_offload_load_msg(st->spi, &st->offload_msg);
-	spi_engine_offload_enable(st->spi, true);
+	spi_engine_ex_offload_load_msg(st->spi, &st->offload_msg);
+	spi_engine_ex_offload_enable(st->spi, true);
 	ad4630_sampling_enable(st, true);
 
 	return 0;
@@ -741,9 +750,10 @@ static int ad4630_buffer_postdisable(struct iio_dev *indio_dev)
 	if (ret)
 		goto out_error;
 
-	spi_engine_offload_enable(st->spi, false);
+	spi_engine_ex_offload_enable(st->spi, false);
 	spi_bus_unlock(st->spi->master);
 
+	spi_unoptimize_message(&st->offload_msg);
 	ret = regmap_read(st->regmap, AD4630_REG_ACCESS, &dummy);
 out_error:
 	pm_runtime_mark_last_busy(&st->spi->dev);
@@ -752,7 +762,7 @@ out_error:
 }
 
 static const char *const ad4630_average_modes[] = {
-	"0", "2", "4", "8", "16", "32",	"64", "128", "256", "512", "1024",
+	"2", "4", "8", "16", "32", "64", "128", "256", "512", "1024",
 	"2048", "4096", "8192", "16384", "32768", "65536"
 };
 
@@ -936,6 +946,17 @@ static const struct ad4630_chip_info ad4630_chip_info[] = {
 		.base_word_len = 24,
 		.n_channels = 1,
 	},
+	[ID_AD4032_24] = {
+		.available_masks = ad4030_channel_masks,
+		.modes = ad4030_24_modes,
+		.out_modes_mask = GENMASK(3, 0),
+		.name = "ad4032-24",
+		.grade = 0x12,
+		.min_offset = (int)BIT(23) * -1,
+		.max_offset = BIT(23) - 1,
+		.base_word_len = 24,
+		.n_channels = 1,
+	},
 	[ID_AD4630_16] = {
 		.available_masks = ad4630_channel_masks,
 		.modes = ad4630_16_modes,
@@ -947,11 +968,33 @@ static const struct ad4630_chip_info ad4630_chip_info[] = {
 		.base_word_len = 16,
 		.n_channels = 2,
 	},
+	[ID_AD4632_16] = {
+		.available_masks = ad4630_channel_masks,
+		.modes = ad4630_16_modes,
+		.out_modes_mask = BIT(3) | GENMASK(1, 0),
+		.name = "ad4632-16",
+		.grade = 0x05,
+		.min_offset = (int)BIT(15) * -1,
+		.max_offset = BIT(15) - 1,
+		.base_word_len = 16,
+		.n_channels = 2,
+	},
 	[ID_AD4630_24] = {
 		.available_masks = ad4630_channel_masks,
 		.modes = ad4630_24_modes,
 		.out_modes_mask = GENMASK(3, 0),
 		.name = "ad4630-24",
+		.min_offset = (int)BIT(23) * -1,
+		.max_offset = BIT(23) - 1,
+		.base_word_len = 24,
+		.n_channels = 2,
+	},
+	[ID_AD4632_24] = {
+		.available_masks = ad4630_channel_masks,
+		.modes = ad4630_24_modes,
+		.out_modes_mask = GENMASK(3, 0),
+		.name = "ad4632-24",
+		.grade = 0x2,
 		.min_offset = (int)BIT(23) * -1,
 		.max_offset = BIT(23) - 1,
 		.base_word_len = 24,
@@ -1171,7 +1214,6 @@ static void ad4630_prepare_spi_sampling_msg(struct ad4630_state *st,
 	 */
 	st->offload_xfer.speed_hz = AD4630_SPI_SAMPLING_SPEED;
 	st->offload_xfer.rx_buf = (void *)-1;
-	st->offload_xfer.len = 1;
 
 	/*
 	 * In host mode, for a 16-bit data-word, the device adds an additional
@@ -1197,6 +1239,8 @@ static void ad4630_prepare_spi_sampling_msg(struct ad4630_state *st,
 	}
 
 	st->offload_xfer.bits_per_word = st->bits_per_word;
+	st->offload_xfer.len = roundup_pow_of_two(BITS_TO_BYTES(st->bits_per_word));
+
 	spi_message_init_with_transfers(&st->offload_msg, &st->offload_xfer, 1);
 }
 
@@ -1480,6 +1524,14 @@ static int ad4630_probe(struct spi_device *spi)
 		ad4630_set_pga_gain(indio_dev, 0);
 	}
 
+	/*
+	 * Due to a hardware bug in some chips when using average mode zero
+	 * (no averaging), set default averaging mode to 2 samples.
+	 */
+	ret = regmap_write(st->regmap, AD4630_REG_AVG, 0x01);
+	if (ret)
+		return ret;
+
 	ret = ad4630_pwm_get(st);
 	if (ret)
 		return ret;
@@ -1548,8 +1600,11 @@ static const struct dev_pm_ops ad4630_pm_ops = {
 
 static const struct spi_device_id ad4630_id_table[] = {
 	{ "ad4030-24", (kernel_ulong_t)&ad4630_chip_info[ID_AD4030_24] },
+	{ "ad4032-24", (kernel_ulong_t)&ad4630_chip_info[ID_AD4032_24] },
 	{ "ad4630-16", (kernel_ulong_t)&ad4630_chip_info[ID_AD4630_16] },
+	{ "ad4632-16", (kernel_ulong_t)&ad4630_chip_info[ID_AD4632_16] },
 	{ "ad4630-24", (kernel_ulong_t)&ad4630_chip_info[ID_AD4630_24] },
+	{ "ad4632-24", (kernel_ulong_t)&ad4630_chip_info[ID_AD4632_24] },
 	{ "adaq4216", (kernel_ulong_t)&ad4630_chip_info[ID_ADAQ4216] },
 	{ "adaq4220", (kernel_ulong_t)&ad4630_chip_info[ID_ADAQ4220] },
 	{ "adaq4224", (kernel_ulong_t)&ad4630_chip_info[ID_ADAQ4224] },
@@ -1560,8 +1615,11 @@ MODULE_DEVICE_TABLE(spi, ad4630_id_table);
 
 static const struct of_device_id ad4630_of_match[] = {
 	{ .compatible = "adi,ad4030-24", .data = &ad4630_chip_info[ID_AD4030_24] },
+	{ .compatible = "adi,ad4032-24", .data = &ad4630_chip_info[ID_AD4032_24] },
 	{ .compatible = "adi,ad4630-16", .data = &ad4630_chip_info[ID_AD4630_16] },
+	{ .compatible = "adi,ad4632-16", .data = &ad4630_chip_info[ID_AD4632_16] },
 	{ .compatible = "adi,ad4630-24", .data = &ad4630_chip_info[ID_AD4630_24] },
+	{ .compatible = "adi,ad4632-24", .data = &ad4630_chip_info[ID_AD4632_24] },
 	{ .compatible = "adi,adaq4216", .data = &ad4630_chip_info[ID_ADAQ4216] },
 	{ .compatible = "adi,adaq4220", .data = &ad4630_chip_info[ID_ADAQ4220] },
 	{ .compatible = "adi,adaq4224", .data = &ad4630_chip_info[ID_ADAQ4224] },
