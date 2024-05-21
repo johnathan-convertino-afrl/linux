@@ -39,17 +39,16 @@
   };
 
   soc {
-    sys_hps_bridges: bridge@c0000000 {
-      compatible = "simple-bus";
-      reg = <0xc0000000 0x20000000>, <0xff200000 0x00200000>;
-      #address-cells = <2>;
-      #size-cells = <1>;
-      ranges =  <0x00000000 0x70000000 0xc0000000 0x7FFFFFFF>,
-                <0x00000001 0x00000000 0xff200000 0x00200000>;
+      sys_hps_bridges: bridge@ff200000 {
+        compatible = "simple-bus";
+        reg = <0xff200000 0x00200000>;
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges = <0x00000000 0xff200000 0x00200000>;
 
       sys_i2c: i2c@80 {
         compatible = "altr,softip-i2c-v1.0";
-        reg = <0x00000001 0x00000080 0x00000040>;
+        reg = <0x00000080 0x00000040>;
         interrupt-parent = <&intc>;
         interrupts = <0 34 IRQ_TYPE_LEVEL_HIGH>;
         clocks = <&sys_clk>;
@@ -88,7 +87,7 @@
       
       fmc_i2c: i2c@C0 {
         compatible = "altr,softip-i2c-v1.0";
-        reg = <0x00000001 0x000000C0 0x00000040>;
+        reg = <0x000000C0 0x00000040>;
         interrupt-parent = <&intc>;
         interrupts = <0 35 IRQ_TYPE_LEVEL_HIGH>;
         clocks = <&sys_clk>;
@@ -100,7 +99,7 @@
 
       sys_gpio_bd: sys-gpio-bd@10 {
         compatible = "altr,pio-16.0", "altr,pio-1.0";
-        reg = <0x00000001 0x00000010 0x00000010>;
+        reg = <0x00000010 0x00000010>;
         altr,gpio-bank-width = <32>;
         #gpio-cells = <2>;
         gpio-controller;
@@ -108,7 +107,7 @@
 
       sys_gpio_in: sys-gpio-in@0 {
         compatible = "altr,pio-16.0", "altr,pio-1.0";
-        reg = <0x00000001 0x00000000 0x00000010>;
+        reg = <0x00000000 0x00000010>;
         altr,gpio-bank-width = <32>;
         #gpio-cells = <2>;
         gpio-controller;
@@ -116,7 +115,7 @@
 
       sys_gpio_out: sys_gpio_out@20 {
         compatible = "altr,pio-1.0";
-        reg = <0x00000001 0x00000020 0x00000010>;
+        reg = <0x00000020 0x00000010>;
         altr,gpio-bank-width = <32>;
         resetvalue = <0>;
         #gpio-cells = <2>;
@@ -125,33 +124,33 @@
 
       sys_spi: spi@40 {
         compatible = "altr,spi-1.0";
-        reg = <0x00000001 0x00000040 0x00000020>;
+        reg = <0x00000040 0x00000020>;
         interrupt-parent = <&intc>;
         interrupts = <0 26 IRQ_TYPE_LEVEL_HIGH>;
         #address-cells = <0x1>;
         #size-cells = <0x0>;
       };
 
-      cf_ad9361_adc_core_0: cf-ad9361-lpc@79020000 {
+      cf_ad9361_adc_core_0: cf-ad9361-lpc@20000 {
         compatible = "adi,axi-ad9361-6.00.a";
-        reg = <0x00000000 0x79020000 0x6000>;
+        reg = <0x79020000 0x6000>;
         dmas = <&adc_dma 0>;
         dma-names = "rx";
         spibus-connected = <&adc0_ad9361>;
       };
 
-      cf_ad9361_dac_core_0: cf-ad9361-dds-core-lpc@79024000  {
+      cf_ad9361_dac_core_0: cf-ad9361-dds-core-lpc@24000  {
         compatible = "adi,axi-ad9361-dds-6.00.a";
-        reg = <0x00000000 0x79024000 0x6000>;
+        reg = <0x79024000 0x6000>;
         dmas = <&dac_dma 0>;
         dma-names = "tx";
         clocks = <&adc0_ad9361 13>;
         clock-names = "sampl_clk";
       };
 
-      adc_dma: adc_dma@7c400000 {
+      adc_dma: adc_dma@40000 {
         compatible = "adi,axi-dmac-1.00.a";
-        reg = <0x00000000 0x7c400000 0x1000>;
+        reg = <0x00040000 0x1000>;
         interrupt-parent = <&intc>;
         interrupts = <0 21 IRQ_TYPE_LEVEL_HIGH>;
         #dma-cells = <1>;
@@ -170,9 +169,9 @@
         };
       };
 
-      dac_dma: dac_dma@7c420000 {
+      dac_dma: dac_dma@44000 {
         compatible = "adi,axi-dmac-1.00.a";
-        reg = <0x00000000 0x7c420000 0x1000>;
+        reg = <0x00044000 0x1000>;
         interrupt-parent = <&intc>;
         interrupts = <0 22 IRQ_TYPE_LEVEL_HIGH>;
         #dma-cells = <1>;
