@@ -24,6 +24,10 @@
 #define S10_BUFFER_TIMEOUT (msecs_to_jiffies(SVC_RECONFIG_BUFFER_TIMEOUT_MS))
 #define S10_RECONFIG_TIMEOUT (msecs_to_jiffies(SVC_RECONFIG_REQUEST_TIMEOUT_MS))
 
+#define INVALID_FIRMWARE_VERSION	0xFFFF
+typedef void (*s10_callback)(struct stratix10_svc_client *client,
+			     struct stratix10_svc_cb_data *data);
+
 /*
  * struct s10_svc_buf
  * buf:  virtual address of buf provided by service layer
@@ -40,11 +44,13 @@ struct s10_priv {
 	struct completion status_return_completion;
 	struct s10_svc_buf svc_bufs[NUM_SVC_BUFS];
 	unsigned long status;
+	unsigned int fw_version;
 };
 
 static int s10_svc_send_msg(struct s10_priv *priv,
 			    enum stratix10_svc_command_code command,
-			    void *payload, u32 payload_length)
+			    void *payload, u32 payload_length,
+			    s10_callback callback)
 {
 	struct stratix10_svc_chan *chan = priv->chan;
 	struct device *dev = priv->client.dev;
@@ -57,6 +63,7 @@ static int s10_svc_send_msg(struct s10_priv *priv,
 	msg.command = command;
 	msg.payload = payload;
 	msg.payload_length = payload_length;
+	priv->client.receive_cb = callback;
 
 	ret = stratix10_svc_send(chan, &msg);
 	dev_dbg(dev, "stratix10_svc_send returned status %d\n", ret);
@@ -134,6 +141,29 @@ static void s10_unlock_bufs(struct s10_priv *priv, void *kaddr)
 }
 
 /*
+ * s10_fw_version_callback - callback for the version of running firmware
+ * @client: service layer client struct
+ * @data: message from service layer
+ */
+static void s10_fw_version_callback(struct stratix10_svc_client *client,
+				    struct stratix10_svc_cb_data *data)
+{
+	struct s10_priv *priv = client->priv;
+	unsigned int *version = (unsigned int *)data->kaddr1;
+
+	if (data->status == BIT(SVC_STATUS_OK))
+		priv->fw_version = *version;
+	else if (data->status == BIT(SVC_STATUS_NO_SUPPORT))
+		dev_warn(client->dev,
+			 "FW doesn't support bitstream authentication\n");
+	else
+		dev_err(client->dev, "Failed to get FW version %lu\n",
+			BIT(data->status));
+
+	complete(&priv->status_return_completion);
+}
+
+/*
  * s10_receive_callback - callback for service layer to use to provide client
  * (this driver) messages received through the mailbox.
  * client: service layer client struct
@@ -146,6 +176,7 @@ static void s10_receive_callback(struct stratix10_svc_client *client,
 	u32 status;
 	int i;
 
+	pr_debug("%s data %x\n", __func__, data->status);
 	WARN_ONCE(!data, "%s: stratix10_svc_rc_data = NULL", __func__);
 
 	status = data->status;
@@ -162,6 +193,7 @@ static void s10_receive_callback(struct stratix10_svc_client *client,
 		s10_unlock_bufs(priv, data->kaddr1);
 		s10_unlock_bufs(priv, data->kaddr2);
 		s10_unlock_bufs(priv, data->kaddr3);
+		s10_unlock_bufs(priv, data->kaddr4);
 	}
 
 	complete(&priv->status_return_completion);
@@ -186,28 +218,37 @@ static int s10_ops_write_init(struct fpga_manager *mgr,
 	if (info->flags & FPGA_MGR_PARTIAL_RECONFIG) {
 		dev_dbg(dev, "Requesting partial reconfiguration.\n");
 		ctype.flags |= BIT(COMMAND_RECONFIG_FLAG_PARTIAL);
+	} else if (info->flags & FPGA_MGR_BITSTREAM_AUTHENTICATE) {
+		if (priv->fw_version == INVALID_FIRMWARE_VERSION) {
+			dev_err(dev, "FW doesn't support\n");
+			return -EINVAL;
+		}
+
+		dev_dbg(dev, "Requesting bitstream authentication.\n");
+		ctype.flags |= BIT(COMMAND_AUTHENTICATE_BITSTREAM);
 	} else {
 		dev_dbg(dev, "Requesting full reconfiguration.\n");
 	}
 
 	reinit_completion(&priv->status_return_completion);
 	ret = s10_svc_send_msg(priv, COMMAND_RECONFIG,
-			       &ctype, sizeof(ctype));
+			       &ctype, sizeof(ctype),
+			       s10_receive_callback);
 	if (ret < 0)
-		goto init_done;
+		goto init_error;
 
 	ret = wait_for_completion_timeout(
 		&priv->status_return_completion, S10_RECONFIG_TIMEOUT);
 	if (!ret) {
 		dev_err(dev, "timeout waiting for RECONFIG_REQUEST\n");
 		ret = -ETIMEDOUT;
-		goto init_done;
+		goto init_error;
 	}
 
 	ret = 0;
 	if (!test_and_clear_bit(SVC_STATUS_OK, &priv->status)) {
 		ret = -ETIMEDOUT;
-		goto init_done;
+		goto init_error;
 	}
 
 	/* Allocate buffers from the service layer's pool. */
@@ -216,15 +257,18 @@ static int s10_ops_write_init(struct fpga_manager *mgr,
 		if (!kbuf) {
 			s10_free_buffers(mgr);
 			ret = -ENOMEM;
-			goto init_done;
+			goto init_error;
 		}
 
 		priv->svc_bufs[i].buf = kbuf;
 		priv->svc_bufs[i].lock = 0;
 	}
 
-init_done:
+	goto init_done;
+
+init_error:
 	stratix10_svc_done(priv->chan);
+init_done:
 	return ret;
 }
 
@@ -259,7 +303,7 @@ static int s10_send_buf(struct fpga_manager *mgr, const char *buf, size_t count)
 	svc_buf = priv->svc_bufs[i].buf;
 	memcpy(svc_buf, buf, xfer_sz);
 	ret = s10_svc_send_msg(priv, COMMAND_RECONFIG_DATA_SUBMIT,
-			       svc_buf, xfer_sz);
+			       svc_buf, xfer_sz, s10_receive_callback);
 	if (ret < 0) {
 		dev_err(dev,
 			"Error while sending data to service layer (%d)", ret);
@@ -303,18 +347,12 @@ static int s10_ops_write(struct fpga_manager *mgr, const char *buf,
 
 			ret = s10_svc_send_msg(
 				priv, COMMAND_RECONFIG_DATA_CLAIM,
-				NULL, 0);
+				NULL, 0, s10_receive_callback);
 			if (ret < 0)
 				break;
 		}
 
-		/*
-		 * If callback hasn't already happened, wait for buffers to be
-		 * returned from service layer
-		 */
-		wait_status = 1; /* not timed out */
-		if (!priv->status)
-			wait_status = wait_for_completion_timeout(
+		wait_status = wait_for_completion_timeout(
 				&priv->status_return_completion,
 				S10_BUFFER_TIMEOUT);
 
@@ -341,6 +379,9 @@ static int s10_ops_write(struct fpga_manager *mgr, const char *buf,
 	if (!s10_free_buffers(mgr))
 		dev_err(dev, "%s not all buffers were freed\n", __func__);
 
+	if (ret < 0)
+		stratix10_svc_done(priv->chan);
+
 	return ret;
 }
 
@@ -352,12 +393,16 @@ static int s10_ops_write_complete(struct fpga_manager *mgr,
 	unsigned long timeout;
 	int ret;
 
-	timeout = usecs_to_jiffies(info->config_complete_timeout_us);
+	/* The time taken to process this is close to 600ms
+	 * This MUST be increased over 1 second
+	 */
+	timeout = S10_RECONFIG_TIMEOUT;
 
 	do {
 		reinit_completion(&priv->status_return_completion);
 
-		ret = s10_svc_send_msg(priv, COMMAND_RECONFIG_STATUS, NULL, 0);
+		ret = s10_svc_send_msg(priv, COMMAND_RECONFIG_STATUS,
+				       NULL, 0, s10_receive_callback);
 		if (ret < 0)
 			break;
 
@@ -405,8 +450,9 @@ static int s10_probe(struct platform_device *pdev)
 	if (!priv)
 		return -ENOMEM;
 
+	priv->fw_version = INVALID_FIRMWARE_VERSION;
 	priv->client.dev = dev;
-	priv->client.receive_cb = s10_receive_callback;
+	priv->client.receive_cb = NULL;
 	priv->client.priv = priv;
 
 	priv->chan = stratix10_svc_request_channel_byname(&priv->client,
@@ -427,6 +473,25 @@ static int s10_probe(struct platform_device *pdev)
 		goto probe_err;
 	}
 
+	/* get the running firmware version */
+	ret = s10_svc_send_msg(priv, COMMAND_FIRMWARE_VERSION,
+			       NULL, 0, s10_fw_version_callback);
+	if (ret) {
+		dev_err(dev, "couldn't get firmware version\n");
+		stratix10_svc_done(priv->chan);
+		goto probe_err;
+	}
+
+	ret = wait_for_completion_timeout(
+		&priv->status_return_completion, S10_RECONFIG_TIMEOUT);
+	if (!ret) {
+		dev_err(dev, "timeout waiting for firmware version\n");
+		stratix10_svc_done(priv->chan);
+		ret = -ETIMEDOUT;
+		goto probe_err;
+	}
+
+	stratix10_svc_done(priv->chan);
 	platform_set_drvdata(pdev, mgr);
 	return 0;
 

@@ -25,7 +25,7 @@ To remove it simply rmdir the directory.
 
 	# rmdir /config/device-tree/overlays/foo
 
-The rationalle of the dual interface (firmware & direct copy) is that each is
+The rationale for the dual interface (firmware & direct copy) is that each is
 better suited to different use patterns. The firmware interface is what's
 intended to be used by hardware managers in the kernel, while the copy interface
 make sense for developers (since it avoids problems with namespaces).

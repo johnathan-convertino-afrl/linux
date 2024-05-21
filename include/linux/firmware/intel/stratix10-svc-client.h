@@ -11,12 +11,14 @@
  *
  * fpga: for FPGA configuration
  * rsu: for remote status update
+ * hwmon: for hardware monitoring (volatge and temperature)
  */
 #define SVC_CLIENT_FPGA			"fpga"
 #define SVC_CLIENT_RSU			"rsu"
 #define SVC_CLIENT_FCS			"fcs"
+#define SVC_CLIENT_HWMON		"hwmon"
 
-/*
+/**
  * Status of the sent command, in bit number
  *
  * SVC_STATUS_OK:
@@ -51,25 +53,31 @@
 #define SVC_STATUS_ERROR		5
 #define SVC_STATUS_NO_SUPPORT		6
 #define SVC_STATUS_INVALID_PARAM	7
-
-/*
+#define SVC_STATUS_NO_RESPONSE		8
+/**
  * Flag bit for COMMAND_RECONFIG
  *
  * COMMAND_RECONFIG_FLAG_PARTIAL:
  * Set to FPGA configuration type (full or partial).
+ *
+ * COMMAND_AUTHENTICATE_BITSTREAM:
+ * Set for bitstream authentication, which makes sure a signed bitstream
+ * has valid signatures before committing it to device.
  */
 #define COMMAND_RECONFIG_FLAG_PARTIAL	0
+#define COMMAND_AUTHENTICATE_BITSTREAM	1
 
 /*
  * Timeout settings for service clients:
  * timeout value used in Stratix10 FPGA manager driver.
  * timeout value used in RSU driver
  */
-#define SVC_RECONFIG_REQUEST_TIMEOUT_MS         300
-#define SVC_RECONFIG_BUFFER_TIMEOUT_MS          720
-#define SVC_RSU_REQUEST_TIMEOUT_MS              300
+#define SVC_RECONFIG_REQUEST_TIMEOUT_MS         5000
+#define SVC_RECONFIG_BUFFER_TIMEOUT_MS          5000
+#define SVC_RSU_REQUEST_TIMEOUT_MS              2000
 #define SVC_FCS_REQUEST_TIMEOUT_MS		2000
 #define SVC_COMPLETED_TIMEOUT_MS		30000
+#define SVC_HWMON_REQUEST_TIMEOUT_MS		2000
 
 struct stratix10_svc_chan;
 
@@ -137,7 +145,102 @@ struct stratix10_svc_chan;
  * SVC_STATUS_OK, SVC_STATUS_INVALID_PARAM, SVC_STATUS_ERROR
  *
  * @COMMAND_FCS_RANDOM_NUMBER_GEN: generate a random number, return status
- * is SVC_STATUS_OK, SVC_STATUS_ERROR
+ * is SVC_STATUS_OK, or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_COUNTER_SET_PREAUTHORIZED: update the counter value for
+ * the selected counter without the signed certificate, return status is
+ * SVC_STATUS_OK, or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_PSGSIGMA_TEARDOWN: tear down all previous black key
+ * provision sessions and delete keys assicated with those sessions,
+ * return status is SVC_STATUS_SUBMITTED or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_GET_CHIP_ID: get the device's chip ID, return status is
+ * SVC_STATUS_SUBMITTED or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_ATTESTATION_SUBKEY: get device's attestation subkey,
+ * return status is SVC_STATUS_SUBMITTED or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_ATTESTATION_MEASUREMENTS: to get device's attestation
+ * measurements, return status is SVC_STATUS_SUBMITTED or SVC_STATUS_ERROR
+ *
+ * @COMMAND_POLL_SERVICE_STATUS: poll if the service request is complete,
+ * return statis is SVC_STATUS_OK, SVC_STATUS_ERROR or SVC_STATUS_BUSY
+ *
+ * @COMMAND_FCS_ATTESTATION_CERTIFICATE: get FPGA attestation certificate,
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_ATTESTATION_CERTIFICATE_RELOAD: reload FPGA attestation
+ * certificate, return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_GET_ROM_PATCH_SHA384: read the ROM patch SHA384 value,
+ * return status is SVC_STATUS_OK, or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_OPEN_SESSION: open the crypto service session(s),
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_CLOSE_SESSION: close the crypto service session(s),
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_IMPORT_KEY: import the crypto service key object,
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_EXPORT_KEY: export the crypto service key object,
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_REMOVE_KEY: remove the crypto service key object
+ * from the device, return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_GET_KEY_INFO: get the crypto service key object
+ * info, return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_AES_CRYPT: sends request to encrypt or decrypt a
+ * data block, return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_GET_DIGEST (INIT and FINALIZE): request the SHA-2
+ * hash digest on a data block, return status is SVC_STATUS_OK or
+ * SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_MAC_VERIFY (INIT and FINALIZE): check the integrity
+ * and authenticity of a blob, return status is SVC_STATUS_OK or
+ * SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_ECDSA_HASH_SIGNING (INIT and FINALIZE): send
+ * digital signature signing request on a data blob, return status is
+ * SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_ECDSA_SHA2_DATA_SIGNING (INIT and FINALIZE): send
+ * SHA2 digital signature signing request on a data blob, return status is
+ * SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_ECDSA_HASH_VERIFY (INIT and FINALIZE): send
+ * digital signature verify request with precalculated hash, return status is
+ * SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_ECDSA_SHA2_VERIFY (INIT and FINALIZE): send digital
+ * signature verify request, return status is SVC_STATUS_OK or
+ * SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_ECDSA_GET_PUBLIC_KEY (INIT and FINALIZE): send the
+ * request to get the public key, return status is SVC_STATUS_OK or
+ * SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_CRYPTO_ECDH_REQUEST (INIT and FINALIZE): send the request
+ * on generating a share secret on Diffie-Hellman key exchange, return
+ * status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_RANDOM_NUMBER_GEN_EXT: extend random number generation,
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_FCS_SDOS_DATA_EXT: extend SDOS data encryption & decryption,
+ * return status is SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
+ * @COMMAND_SMC_SVC_VERSION: Non-mailbox SMC SVC API Version,
+ * return status is SVC_STATUS_OK
+ *
+ * @COMMAND_MBOX_SEND_CMD: send generic mailbox command, return status is
+ * SVC_STATUS_OK or SVC_STATUS_ERROR
+ *
  */
 enum stratix10_svc_command_code {
 	/* for FPGA */
@@ -162,10 +265,57 @@ enum stratix10_svc_command_code {
 	COMMAND_FCS_DATA_ENCRYPTION,
 	COMMAND_FCS_DATA_DECRYPTION,
 	COMMAND_FCS_RANDOM_NUMBER_GEN,
+	COMMAND_FCS_COUNTER_SET_PREAUTHORIZED,
+	COMMAND_FCS_GET_ROM_PATCH_SHA384,
+	/* for Attestation */
+	COMMAND_FCS_PSGSIGMA_TEARDOWN = 30,
+	COMMAND_FCS_GET_CHIP_ID,
+	COMMAND_FCS_ATTESTATION_SUBKEY,
+	COMMAND_FCS_ATTESTATION_MEASUREMENTS,
+	COMMAND_FCS_ATTESTATION_CERTIFICATE,
+	COMMAND_FCS_ATTESTATION_CERTIFICATE_RELOAD,
 	/* for general status poll */
 	COMMAND_POLL_SERVICE_STATUS = 40,
-	/* Non-mailbox SMC Call */
+	COMMAND_POLL_SERVICE_STATUS_ASYNC,
+	/* for crypto service */
+	COMMAND_FCS_CRYPTO_OPEN_SESSION = 50,
+	COMMAND_FCS_CRYPTO_CLOSE_SESSION,
+	COMMAND_FCS_CRYPTO_IMPORT_KEY,
+	COMMAND_FCS_CRYPTO_EXPORT_KEY,
+	COMMAND_FCS_CRYPTO_REMOVE_KEY,
+	COMMAND_FCS_CRYPTO_GET_KEY_INFO,
+	COMMAND_FCS_CRYPTO_AES_CRYPT_INIT,
+	COMMAND_FCS_CRYPTO_AES_CRYPT_UPDATE,
+	COMMAND_FCS_CRYPTO_AES_CRYPT_FINALIZE,
+	COMMAND_FCS_CRYPTO_GET_DIGEST_INIT,
+	COMMAND_FCS_CRYPTO_GET_DIGEST_UPDATE,
+	COMMAND_FCS_CRYPTO_GET_DIGEST_FINALIZE,
+	COMMAND_FCS_CRYPTO_MAC_VERIFY_INIT,
+	COMMAND_FCS_CRYPTO_MAC_VERIFY_UPDATE,
+	COMMAND_FCS_CRYPTO_MAC_VERIFY_FINALIZE,
+	COMMAND_FCS_CRYPTO_ECDSA_HASH_SIGNING_INIT,
+	COMMAND_FCS_CRYPTO_ECDSA_HASH_SIGNING_FINALIZE,
+	COMMAND_FCS_CRYPTO_ECDSA_SHA2_DATA_SIGNING_INIT,
+	COMMAND_FCS_CRYPTO_ECDSA_SHA2_DATA_SIGNING_UPDATE,
+	COMMAND_FCS_CRYPTO_ECDSA_SHA2_DATA_SIGNING_FINALIZE,
+	COMMAND_FCS_CRYPTO_ECDSA_HASH_VERIFY_INIT,
+	COMMAND_FCS_CRYPTO_ECDSA_HASH_VERIFY_FINALIZE,
+	COMMAND_FCS_CRYPTO_ECDSA_SHA2_VERIFY_INIT,
+	COMMAND_FCS_CRYPTO_ECDSA_SHA2_VERIFY_UPDATE,
+	COMMAND_FCS_CRYPTO_ECDSA_SHA2_VERIFY_FINALIZE,
+	COMMAND_FCS_CRYPTO_ECDSA_GET_PUBLIC_KEY_INIT,
+	COMMAND_FCS_CRYPTO_ECDSA_GET_PUBLIC_KEY_FINALIZE,
+	COMMAND_FCS_CRYPTO_ECDH_REQUEST_INIT,
+	COMMAND_FCS_CRYPTO_ECDH_REQUEST_FINALIZE,
+	COMMAND_FCS_RANDOM_NUMBER_GEN_EXT,
+	COMMAND_FCS_SDOS_DATA_EXT,
+	/* for generic mailbox send command */
+	COMMAND_MBOX_SEND_CMD = 100,
+	/* Non-mailbox SMC Call*/
 	COMMAND_SMC_SVC_VERSION = 200,
+	/* for HWMON */
+	COMMAND_HWMON_READTEMP,
+	COMMAND_HWMON_READVOLT
 };
 
 /**
@@ -183,7 +333,7 @@ struct stratix10_svc_client_msg {
 	void *payload_output;
 	size_t payload_length_output;
 	enum stratix10_svc_command_code command;
-	u64 arg[3];
+	u64 arg[6];
 };
 
 /**
@@ -200,12 +350,14 @@ struct stratix10_svc_command_config_type {
  * @kaddr1: address of 1st completed data block
  * @kaddr2: address of 2nd completed data block
  * @kaddr3: address of 3rd completed data block
+ * @kaddr4: address of 4th completed data block
  */
 struct stratix10_svc_cb_data {
 	u32 status;
 	void *kaddr1;
 	void *kaddr2;
 	void *kaddr3;
+	void *kaddr4;
 };
 
 /**

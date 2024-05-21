@@ -76,7 +76,7 @@ enum fpga_mgr_states {
  *
  * %FPGA_MGR_COMPRESSED_BITSTREAM: FPGA bitstream is compressed
  *
- * %FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM: indicates bitstream is encrypted with
+ * %FPGA_MGR_BITSTREAM_AUTHENTICATE: do FPGA bitstream authentication only
  *					  user key
  * %FPGA_MGR_DDR_MEM_AUTH_BITSTREAM: do bitstream authentication using DDR
  *				     memory if supported
@@ -89,6 +89,7 @@ enum fpga_mgr_states {
 #define FPGA_MGR_BITSTREAM_LSB_FIRST	BIT(3)
 #define FPGA_MGR_COMPRESSED_BITSTREAM	BIT(4)
 #define FPGA_MGR_USERKEY_ENCRYPTED_BITSTREAM	BIT(5)
+#define FPGA_MGR_BITSTREAM_AUTHENTICATE	BIT(5)
 #define FPGA_MGR_DDR_MEM_AUTH_BITSTREAM		BIT(6)
 #define FPGA_MGR_SECURE_MEM_AUTH_BITSTREAM	BIT(7)
 #define FPGA_MGR_CONFIG_DMA_BUF			BIT(8)
@@ -246,9 +247,9 @@ struct fpga_manager {
 	struct fpga_compat_id *compat_id;
 	const struct fpga_manager_ops *mops;
 	void *priv;
-	int err;
-#ifdef CONFIG_FPGA_MGR_DEBUG_FS
-	struct dentry *dir;
+#if IS_ENABLED(CONFIG_FPGA_MGR_DEBUG_FS)
+	void *debugfs;
+#endif
 #endif
 };
 

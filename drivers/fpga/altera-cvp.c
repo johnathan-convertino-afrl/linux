@@ -52,7 +52,7 @@
 /* V2 Defines */
 #define VSE_CVP_TX_CREDITS		0x49	/* 8bit */
 
-#define V2_CREDIT_TIMEOUT_US		20000
+#define V2_CREDIT_TIMEOUT_US		40000
 #define V2_CHECK_CREDIT_US		10
 #define V2_POLL_TIMEOUT_US		1000000
 #define V2_USER_TIMEOUT_US		500000
@@ -66,6 +66,8 @@
 #define ALTERA_CVP_V1_SIZE	4
 #define ALTERA_CVP_V2_SIZE	4096
 
+/* Tear-down retry */
+#define CVP_TEARDOWN_MAX_RETRY 10
 /* Optional CvP config error status check for debugging */
 static bool altera_cvp_chkcfg;
 
@@ -315,6 +317,22 @@ static int altera_cvp_teardown(struct fpga_manager *mgr,
 	return ret;
 }
 
+static int altera_cvp_recovery(struct fpga_manager *mgr,
+			      struct fpga_image_info *info)
+{
+	int ret = 0, retry = 0;
+
+	for (retry = 0; retry < CVP_TEARDOWN_MAX_RETRY; retry++) {
+		ret = altera_cvp_teardown(mgr, info);
+		if (!ret)
+			break;
+		dev_warn(&mgr->dev,
+				 "%s: [%d] Tear-down failed. Retrying\n",
+				 __func__,
+				 retry);
+	}
+	return ret;
+}
 static int altera_cvp_write_init(struct fpga_manager *mgr,
 				 struct fpga_image_info *info,
 				 const char *buf, size_t count)
@@ -347,7 +365,7 @@ static int altera_cvp_write_init(struct fpga_manager *mgr,
 
 	if (val & VSE_CVP_STATUS_CFG_RDY) {
 		dev_warn(&mgr->dev, "CvP already started, tear down first\n");
-		ret = altera_cvp_teardown(mgr, info);
+		ret = altera_cvp_recovery(mgr, info);
 		if (ret)
 			return ret;
 	}
@@ -488,7 +506,7 @@ static int altera_cvp_write_complete(struct fpga_manager *mgr,
 	u32 mask, val;
 	int ret;
 
-	ret = altera_cvp_teardown(mgr, info);
+	ret = altera_cvp_recovery(mgr, info);
 	if (ret)
 		return ret;
 
@@ -561,7 +579,7 @@ static int altera_cvp_probe(struct pci_dev *pdev,
 static void altera_cvp_remove(struct pci_dev *pdev);
 
 static struct pci_device_id altera_cvp_id_tbl[] = {
-	{ PCI_VDEVICE(ALTERA, PCI_ANY_ID) },
+	{ PCI_VDEVICE(ALTERA, 0x00) },
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, altera_cvp_id_tbl);
