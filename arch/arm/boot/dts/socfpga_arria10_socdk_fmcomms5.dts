@@ -48,17 +48,17 @@
         #size-cells = <0x0>;
       };
 
-      cf_ad9361_adc_core_0: cf-ad9361-lpc@79020000 {
+      cf_ad9361_adc_core_0: cf-ad9361-lpc@40000 {
         compatible = "adi,axi-ad9361-6.00.a";
-        reg = <0x79020000 0x6000>;
+        reg = <0x00040000 0x6000>;
         dmas = <&adc_dma 0>;
         dma-names = "rx";
         spibus-connected = <&adc0_ad9361>;
       };
 
-      cf_ad9361_dac_core_0: cf-ad9361-dds-core-lpc@79024000 {
+      cf_ad9361_dac_core_0: cf-ad9361-dds-core-lpc@44000  {
         compatible = "adi,axi-ad9361-dds-6.00.a";
-        reg = <0x79024000 0x6000>;
+        reg = <0x00044000 0x6000>;
         dmas = <&dac_dma 0>;
         dma-names = "tx";
         clocks = <&adc0_ad9361 13>;
@@ -66,27 +66,27 @@
       };
 
       /* Slave HDL core without DMA */
-      cf_ad9361_adc_core_1: cf-ad9361-B@79040000 {
+      cf_ad9361_adc_core_1: cf-ad9361-B@60000 {
         compatible = "adi,axi-ad9361-6.00.a";
-        reg = <0x79040000 0x6000>;
+        reg = <0x00060000 0x6000>;
         spibus-connected = <&adc1_ad9361>;
       };
 
-      cf_ad9361_dac_core_1: cf-ad9361-dds-core-B@79044000 {
+      cf_ad9361_dac_core_1: cf-ad9361-dds-core-B@64000 {
         compatible = "adi,axi-ad9361x2-dds-6.00.a";
-        reg = <0x79044000 0x1000>;
+        reg = <0x00064000 0x1000>;
         clocks = <&adc1_ad9361 13>;
         clock-names = "sampl_clk";
-        mastercore-reg = <0x79024000 0x1000>;
+        mastercore-reg = <0x00044000 0x1000>;
       };
 
-      adc_dma: adc_dma@7c400000 {
+      adc_dma: adc_dma@50000 {
         compatible = "adi,axi-dmac-1.00.a";
-        reg = <0x7c400000 0x1000>;
+        reg = <0x00050000 0x1000>;
         interrupt-parent = <&intc>;
         interrupts = <0 21 IRQ_TYPE_LEVEL_HIGH>;
         #dma-cells = <1>;
-        clocks = <&dmac_clkin>;
+        clocks = <&dma_clk>;
 
         adi,channels {
           #size-cells = <0>;
@@ -101,13 +101,13 @@
         };
       };
 
-      dac_dma: dac_dma@7c420000 {
+      dac_dma: dac_dma@54000 {
         compatible = "adi,axi-dmac-1.00.a";
-        reg = <0x7c420000 0x1000>;
+        reg = <0x00054000 0x1000>;
         interrupt-parent = <&intc>;
         interrupts = <0 22 IRQ_TYPE_LEVEL_HIGH>;
         #dma-cells = <1>;
-        clocks = <&dmac_clkin>;
+        clocks = <&dma_clk>;
         adi,channels {
           #size-cells = <0>;
           #address-cells = <1>;
