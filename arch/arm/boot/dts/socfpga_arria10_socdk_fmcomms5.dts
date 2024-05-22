@@ -14,11 +14,11 @@
 
 / {
   clocks {
-    dmac_clkin: clock@2 {
-      #clock-cells = <0>;
+    dma_clk: dma_clk {
+      #clock-cells = <0x0>;
       compatible = "fixed-clock";
       clock-frequency = <250000000>;
-      clock-output-names = "dma_clock";
+      clock-output-names = "dma_clk";
     };
   };
 
