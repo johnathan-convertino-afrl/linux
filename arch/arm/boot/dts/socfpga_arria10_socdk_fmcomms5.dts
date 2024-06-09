@@ -130,14 +130,33 @@
 
 #include "adi-fmcomms5.dtsi"
 
-&adc0_ad9361 {
-  /delete-property/ spi-cpha;
-
-  /* GPIO */
-  reset-gpios = <&gpio 14 0>;
-  sync-gpios = <&gpio 13 0>;
-  en_agc-gpios = <&gpio 12 0>;
-
-  /* AXI Converter */
-  adi,bb-clk-change-dig-tune-enable;
-};
+ /*
+  * INCOMPLETE, GPIOS NEED TO BE ASSIGNED TO THE CORRECT PINS
+  *
+  *&adc0_ad9361 { fmcomms2 (NOT THE SAME, EXAMPLE ONLY)
+  *  /delete-property/ spi-cpha;
+  *
+  *  /* GPIO */
+  *  reset-gpios = <&gpio 14 0>;
+  *  sync-gpios = <&gpio 13 0>;
+  *  en_agc-gpios = <&gpio 12 0>;
+  *};
+  *
+  *&adc0_ad9361 { ZC702
+  *  /delete-property/ spi-cpha;
+  *
+  *	reset-gpios = <&gpio0 14 0>;
+  *	sync-gpios = <&gpio0 13 0>;
+  *	cal-sw1-gpios = <&gpio0 12 0>;
+  *	cal-sw2-gpios = <&gpio0 10 0>;
+  *
+  *  /* AXI Converter */
+  *  adi,bb-clk-change-dig-tune-enable;
+  *};
+  *
+  *&adc1_ad9361 { ZC702
+  *  /delete-property/ spi-cpha;
+  *
+  *	reset-gpios = <&gpio0 113 0>;
+  *};
+  */
