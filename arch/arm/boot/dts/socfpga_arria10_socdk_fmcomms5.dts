@@ -142,7 +142,7 @@
   adi,bb-clk-change-dig-tune-enable;
 };
 
-&adc1_ad9361 { ZC702
+&adc1_ad9361 {
   /delete-property/ spi-cpha;
 
 	reset-gpios = <&gpio 8 0>;
