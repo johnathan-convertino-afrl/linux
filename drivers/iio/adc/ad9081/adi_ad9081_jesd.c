@@ -3653,6 +3653,7 @@ adi_ad9081_jesd_rx_phy_prbs_test(adi_ad9081_device_t *device,
 	int32_t err;
 	uint32_t i;
 	uint8_t tmp_reg;
+	uint8_t link_en;
 	AD9081_NULL_POINTER_RETURN(device);
 	AD9081_LOG_FUNC();
 
@@ -3674,6 +3675,25 @@ adi_ad9081_jesd_rx_phy_prbs_test(adi_ad9081_device_t *device,
 		return API_CMS_ERROR_INVALID_PARAM;
 	}
 
+	err = adi_ad9081_hal_bf_get(
+		device, REG_GENERAL_JRX_CTRL_ADDR, BF_LINK_EN_INFO,
+		&link_en, 1);
+	AD9081_ERROR_RETURN(err);
+
+	if (!link_en) {
+		err = adi_ad9081_hal_log_write(
+			device, ADI_CMS_LOG_ERR,
+			"jesd_rx_phy_prbs_test(): link not enabled\n");
+		AD9081_ERROR_RETURN(err);
+
+		return API_CMS_ERROR_ERROR;
+	}
+
+	err = adi_ad9081_hal_bf_set(
+		device, REG_GENERAL_JRX_CTRL_ADDR, BF_LINK_EN_INFO,
+		0); /* LINK_EN use 2bits for link0 & link1 */
+	AD9081_ERROR_RETURN(err);
+
 	/* select phy prbs test source and mode */
 	err = adi_ad9081_hal_bf_set(
 		device, REG_JRX_TEST_2_ADDR, BF_JRX_PRBS_SOURCE_INFO,
@@ -3684,11 +3704,23 @@ adi_ad9081_jesd_rx_phy_prbs_test(adi_ad9081_device_t *device,
 				    tmp_reg); /* not paged */
 	AD9081_ERROR_RETURN(err);
 
+	err = adi_ad9081_hal_bf_set(
+		device, REG_GENERAL_JRX_CTRL_ADDR, BF_LINK_EN_INFO,
+		link_en); /* LINK_EN use 2bits for link0 & link1 */
+	AD9081_ERROR_RETURN(err);
+
+	err = adi_ad9081_hal_delay_us(device, 1);
+	AD9081_ERROR_RETURN(err);
+
 	/* clear prbs error count */
 	err = adi_ad9081_hal_bf_set(device, REG_JRX_TEST_0_ADDR,
 				    BF_JRX_PRBS_LANE_CLEAR_ERRORS_INFO,
 				    1); /* not paged */
 	AD9081_ERROR_RETURN(err);
+
+	err = adi_ad9081_hal_delay_us(device, 500000); /* 500 ms */
+	AD9081_ERROR_RETURN(err);
+
 	err = adi_ad9081_hal_bf_set(device, REG_JRX_TEST_0_ADDR,
 				    BF_JRX_PRBS_LANE_CLEAR_ERRORS_INFO,
 				    0); /* not paged */
@@ -4026,7 +4058,7 @@ int32_t adi_ad9081_jesd_rx_qr_vertical_eye_scan(adi_ad9081_device_t *device,
 
 int32_t adi_ad9081_jesd_rx_qr_two_dim_eye_scan(adi_ad9081_device_t *device,
 					       uint8_t lane,
-					       uint16_t eye_scan_data[96])
+					       int16_t eye_scan_data[99])
 {
 	int32_t err;
 	uint8_t en_flash_src_des_rc, comp_setting, data, spo, quad1, quad2,
@@ -4077,8 +4109,8 @@ int32_t adi_ad9081_jesd_rx_qr_two_dim_eye_scan(adi_ad9081_device_t *device,
 		AD9081_ERROR_RETURN(err);
 
 		eye_scan_data[i] = -(128 - spo);
-		eye_scan_data[i + 1] = quad2;
-		eye_scan_data[i + 2] = -quad3;
+		eye_scan_data[i + 1] = quad2 * 4;
+		eye_scan_data[i + 2] = -quad3 * 4;
 		i += 3;
 	}
 	for (spo = 113; spo < 128; spo++) {
@@ -4089,8 +4121,8 @@ int32_t adi_ad9081_jesd_rx_qr_two_dim_eye_scan(adi_ad9081_device_t *device,
 	err = adi_ad9081_jesd_rx_spo_set(device, lane, 0);
 	AD9081_ERROR_RETURN(err);
 
-	/* Sweeping SPO from 1 to 16 */
-	for (spo = 1; spo < 17; spo++) {
+	/* Sweeping SPO from 0 to 16 */
+	for (spo = 0; spo < 17; spo++) {
 		err = adi_ad9081_jesd_rx_spo_set(device, lane, spo);
 		AD9081_ERROR_RETURN(err);
 
@@ -4111,8 +4143,8 @@ int32_t adi_ad9081_jesd_rx_qr_two_dim_eye_scan(adi_ad9081_device_t *device,
 		AD9081_ERROR_RETURN(err);
 
 		eye_scan_data[i] = spo;
-		eye_scan_data[i + 1] = quad1;
-		eye_scan_data[i + 2] = -quad4;
+		eye_scan_data[i + 1] = quad1 * 4;
+		eye_scan_data[i + 2] = -quad4 * 4;
 		i += 3;
 	}
 
@@ -4197,7 +4229,7 @@ int32_t adi_ad9081_jesd_rx_hr_vertical_eye_scan(
 int32_t adi_ad9081_jesd_rx_hr_two_dim_eye_scan(
 	adi_ad9081_device_t *device, uint8_t lane,
 	adi_cms_jesd_prbs_pattern_e prbs_pattern, uint32_t prbs_delay_ms,
-	uint16_t eye_scan_data[192])
+	int16_t eye_scan_data[195])
 {
 	int32_t err;
 	int8_t i;
@@ -4266,7 +4298,7 @@ int32_t adi_ad9081_jesd_rx_hr_two_dim_eye_scan(
 		AD9081_ERROR_RETURN(err);
 	}
 	/* Right Horizontal eye scan */
-	for (i = 1; i < (spo_size + 1); i++) {
+	for (i = 0; i < (spo_size + 1); i++) {
 		err = adi_ad9081_jesd_rx_gen_2s_comp(device, i, 7, &spo_value);
 		AD9081_ERROR_RETURN(err);
 		err = adi_ad9081_jesd_rx_spo_set(device, lane, spo_value);

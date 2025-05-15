@@ -146,9 +146,9 @@ static const struct iio_info adm1177_info = {
 	.read_raw = &adm1177_read_raw,
 };
 
-static int adm1177_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int adm1177_probe(struct i2c_client *client)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct adm1177_chip_info *chip;
 	struct iio_dev *indio_dev;
 
@@ -219,7 +219,7 @@ static const struct of_device_id adm1177_dt_ids[] = {
 	{ .compatible = "adi,adm1177-iio" },
 	{},
 };
-MODULE_DEVICE_TABLE(of, nau7802_dt_ids);
+MODULE_DEVICE_TABLE(of, adm1177_dt_ids);
 
 static struct i2c_driver adm1177_driver = {
 	.driver = {

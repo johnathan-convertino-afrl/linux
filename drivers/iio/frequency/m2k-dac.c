@@ -720,9 +720,9 @@ static int m2k_dac_alloc_channel(struct platform_device *pdev,
 	indio_dev->channels = &m2k_dac_channel_info;
 	indio_dev->num_channels = 1;
 
-	ret = devm_iio_dmaengine_buffer_setup(indio_dev->dev.parent, indio_dev,
-					      m2k_dac_ch_dma_names[num],
-					      IIO_BUFFER_DIRECTION_OUT);
+	ret = devm_iio_dmaengine_buffer_setup_ext(indio_dev->dev.parent, indio_dev,
+						  m2k_dac_ch_dma_names[num],
+						  IIO_BUFFER_DIRECTION_OUT);
 	if (ret)
 		return ret;
 
@@ -846,7 +846,7 @@ static const struct of_device_id m2k_dac_of_match[] = {
 	},
 	{ },
 };
-MODULE_DEVICE_TABLE(of, m2k_dac_match);
+MODULE_DEVICE_TABLE(of, m2k_dac_of_match);
 
 static struct platform_driver m2k_dac_driver = {
 	.driver = {

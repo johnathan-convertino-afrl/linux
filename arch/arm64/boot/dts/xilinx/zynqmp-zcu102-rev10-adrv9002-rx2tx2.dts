@@ -39,42 +39,18 @@
 			compatible = "adi,axi-dmac-1.00.a";
 			reg = <0x84A30000 0x10000>;
 			#dma-cells = <1>;
+			dma-coherent;
 			interrupts = <0 109 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <64>;
-					adi,source-bus-type = <2>;
-					adi,destination-bus-width = <64>;
-					adi,destination-bus-type = <0>;
-				};
-			};
 		};
 
 		tx_dma: dma@84A50000 {
 			compatible = "adi,axi-dmac-1.00.a";
 			reg = <0x84A50000 0x10000>;
 			#dma-cells = <1>;
+			dma-coherent;
 			interrupts = <0 105 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <64>;
-					adi,source-bus-type = <0>;
-					adi,destination-bus-width = <64>;
-					adi,destination-bus-type = <2>;
-				};
-			};
 		};
 
 		axi_adrv9002_core_rx: axi-adrv9002-rx-lpc@84A00000 {

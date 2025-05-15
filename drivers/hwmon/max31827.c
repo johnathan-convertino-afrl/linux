@@ -11,19 +11,20 @@
 #include <linux/hwmon.h>
 #include <linux/i2c.h>
 #include <linux/mutex.h>
+#include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
-#include <linux/of_device.h>
 
-#define MAX31827_T_REG	0x0
+#define MAX31827_T_REG			0x0
 #define MAX31827_CONFIGURATION_REG	0x2
-#define MAX31827_TH_REG	0x4
-#define MAX31827_TL_REG 0x6
-#define MAX31827_TH_HYST_REG	0x8
-#define MAX31827_TL_HYST_REG	0xA
+#define MAX31827_TH_REG			0x4
+#define MAX31827_TL_REG			0x6
+#define MAX31827_TH_HYST_REG		0x8
+#define MAX31827_TL_HYST_REG		0xA
 
 #define MAX31827_CONFIGURATION_1SHOT_MASK	BIT(0)
 #define MAX31827_CONFIGURATION_CNV_RATE_MASK	GENMASK(3, 1)
+#define MAX31827_CONFIGURATION_PEC_EN_MASK	BIT(4)
 #define MAX31827_CONFIGURATION_TIMEOUT_MASK	BIT(5)
 #define MAX31827_CONFIGURATION_RESOLUTION_MASK	GENMASK(7, 6)
 #define MAX31827_CONFIGURATION_ALRM_POL_MASK	BIT(8)
@@ -344,7 +345,7 @@ static int max31827_write(struct device *dev, enum hwmon_sensor_types type,
 		switch (attr) {
 		case hwmon_temp_enable:
 			if (val >> 1)
-				return -EOPNOTSUPP;
+				return -EINVAL;
 
 			mutex_lock(&st->lock);
 			/**
@@ -380,11 +381,11 @@ static int max31827_write(struct device *dev, enum hwmon_sensor_types type,
 		default:
 			return -EOPNOTSUPP;
 		}
-
 	case hwmon_chip:
-		if (attr == hwmon_chip_update_interval) {
+		switch (attr) {
+		case hwmon_chip_update_interval:
 			if (!st->enable)
-				return -EOPNOTSUPP;
+				return -EINVAL;
 
 			/*
 			 * Convert the desired conversion rate into register
@@ -410,14 +411,17 @@ static int max31827_write(struct device *dev, enum hwmon_sensor_types type,
 				return ret;
 
 			st->update_interval = val;
+			return 0;
+		case hwmon_chip_pec:
+			return regmap_update_bits(st->regmap, MAX31827_CONFIGURATION_REG,
+						  MAX31827_CONFIGURATION_PEC_EN_MASK,
+						  val ? MAX31827_CONFIGURATION_PEC_EN_MASK : 0);
+		default:
+			return -EOPNOTSUPP;
 		}
-		break;
-
 	default:
 		return -EOPNOTSUPP;
 	}
-
-	return 0;
 }
 
 static ssize_t temp1_resolution_show(struct device *dev,
@@ -583,7 +587,7 @@ static const struct hwmon_channel_info *max31827_info[] = {
 					 HWMON_T_MIN_HYST | HWMON_T_MIN_ALARM |
 					 HWMON_T_MAX | HWMON_T_MAX_HYST |
 					 HWMON_T_MAX_ALARM),
-	HWMON_CHANNEL_INFO(chip, HWMON_C_UPDATE_INTERVAL),
+	HWMON_CHANNEL_INFO(chip, HWMON_C_UPDATE_INTERVAL | HWMON_C_PEC),
 	NULL,
 };
 
@@ -657,7 +661,7 @@ static struct i2c_driver max31827_driver = {
 		.name = "max31827",
 		.of_match_table = max31827_of_match,
 	},
-	.probe_new = max31827_probe,
+	.probe = max31827_probe,
 	.id_table = max31827_i2c_ids,
 };
 module_i2c_driver(max31827_driver);

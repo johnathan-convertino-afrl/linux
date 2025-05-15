@@ -1,17 +1,11 @@
 trigger:
-- rpi-4.19.y
-- rpi-5.4.y
-- rpi-5.10.y
-- rpi-5.15.y
 - rpi-6.1.y
+- rpi-6.6.y
 - staging-rpi/*
 
 pr:
-- rpi-4.19.y
-- rpi-5.4.y
-- rpi-5.10.y
-- rpi-5.15.y
 - rpi-6.1.y
+- rpi-6.6.y
 
 stages:
 - stage: Builds
@@ -87,8 +81,8 @@ stages:
   - job: Push_to_SWDownloads
     condition: and(
        succeeded(),
-       or(eq(variables['Build.SourceBranch'], 'refs/heads/rpi-5.15.y'),
-          eq(variables['Build.SourceBranch'], 'refs/heads/rpi-6.1.y'))
+       or(eq(variables['Build.SourceBranch'], 'refs/heads/rpi-6.1.y'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/rpi-6.6.y'))
        )
     pool:
       vmImage: 'ubuntu-latest'
@@ -101,15 +95,15 @@ stages:
         displayName: 'Download rsa key'
         inputs:
           secureFile: 'id_rsa'
-      - bash: ./ci/travis/prepare_artifacts.sh swdownloads
+      - bash: ./ci/travis/prepare_artifacts_rpi.sh swdownloads
         env:
           DEST_SERVER: $(SERVER_ADDRESS)
         displayName: "Push to SWDownloads"
   - job: Push_to_Artifactory
     condition: and(
        succeeded(),
-       or(eq(variables['Build.SourceBranch'], 'refs/heads/rpi-5.15.y'),
-          eq(variables['Build.SourceBranch'], 'refs/heads/rpi-6.1.y'))
+       or(eq(variables['Build.SourceBranch'], 'refs/heads/rpi-6.1.y'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/rpi-6.6.y'))
        )
     pool:
       name: Default
@@ -119,7 +113,7 @@ stages:
       - task: DownloadPipelineArtifact@2
         inputs:
           path: $(Build.SourcesDirectory)/bin
-      - bash: ./ci/travis/prepare_artifacts.sh artifactory
+      - bash: ./ci/travis/prepare_artifacts_rpi.sh artifactory
         env:
           ARTIFACTORY_PATH: $(PATH)
           ARTIFACTORY_TOKEN: $(TOKEN)

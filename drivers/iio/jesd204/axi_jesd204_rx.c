@@ -12,6 +12,7 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/err.h>
+#include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/bitfield.h>
@@ -104,6 +105,11 @@ struct axi_jesd204_rx {
 	/* Used for probe ordering */
 	struct clk_hw dummy_clk;
 	struct clk *lane_clk;
+
+	/* Versal specific gpios */
+	struct gpio_desc *reset_pll_datapath_gpio;
+	struct gpio_desc *reset_datapath_gpio;
+	struct gpio_desc *reset_done_gpio;
 };
 
 enum {
@@ -752,7 +758,6 @@ static int axi_jesd204_register_dummy_clk(struct axi_jesd204_rx *jesd,
 	struct device_node *np = dev->of_node;
 	const char *parent_name, *clk_name;
 	struct clk_init_data init;
-	struct clk *dummy_clk;
 	int ret;
 
 	ret = of_property_read_string(np, "clock-output-names",
@@ -770,13 +775,11 @@ static int axi_jesd204_register_dummy_clk(struct axi_jesd204_rx *jesd,
 
 	jesd->dummy_clk.init = &init;
 
-	dummy_clk = devm_clk_register(dev, &jesd->dummy_clk);
-	if (IS_ERR(dummy_clk))
-		return PTR_ERR(dummy_clk);
+	ret = devm_clk_hw_register(dev, &jesd->dummy_clk);
+	if (ret)
+		return ret;
 
-	of_clk_add_provider(np, of_clk_src_simple_get, dummy_clk);
-
-	return 0;
+	return devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get, &jesd->dummy_clk);
 }
 
 static int axi_jesd204_rx_pcore_check(struct axi_jesd204_rx *jesd)
@@ -898,7 +901,6 @@ static int axi_jesd204_rx_jesd204_link_pre_setup(struct jesd204_dev *jdev,
 		return ret;
 	}
 
-
 	return JESD204_STATE_CHANGE_DONE;
 }
 
@@ -986,6 +988,11 @@ static int axi_jesd204_rx_jesd204_clks_enable(struct jesd204_dev *jdev,
 		}
 	}
 
+	ret = axi_jesd_ext_reset(dev, "rx_pll_datapath", jesd->reset_pll_datapath_gpio,
+							 jesd->reset_done_gpio);
+	if (ret)
+		return ret;
+
 	return JESD204_STATE_CHANGE_DONE;
 }
 
@@ -1025,6 +1032,11 @@ static int axi_jesd204_rx_jesd204_link_enable(struct jesd204_dev *jdev,
 			__func__, lnk->link_id, ret);
 		return ret;
 	}
+
+	ret = axi_jesd_ext_reset(dev, "rx_datapath", jesd->reset_datapath_gpio,
+				 jesd->reset_done_gpio);
+	if (ret)
+		return ret;
 
 	writel_relaxed(0x3, jesd->base + JESD204_RX_REG_SYSREF_STATUS);
 	writel_relaxed(0x0, jesd->base + JESD204_RX_REG_LINK_DISABLE);
@@ -1139,11 +1151,31 @@ static void axi_jesd204_rx_create_remove_devattrs(struct device *dev,
 	}
 }
 
+static void axi_jesd204_clk_disable(void *clk)
+{
+	clk_disable_unprepare(clk);
+}
+
+static void axi_jesd204_rx_teardown(void *data)
+{
+	struct axi_jesd204_rx *jesd = data;
+
+	writel_relaxed(0xff, jesd->base + JESD204_RX_REG_IRQ_PENDING);
+	writel_relaxed(0x00, jesd->base + JESD204_RX_REG_IRQ_ENABLE);
+	writel_relaxed(0x1, jesd->base + JESD204_RX_REG_LINK_DISABLE);
+}
+
+static void axi_jesd204_rx_rmattr(void *data)
+{
+	struct axi_jesd204_rx *jesd = data;
+
+	axi_jesd204_rx_create_remove_devattrs(jesd->dev, jesd, false);
+}
+
 static int axi_jesd204_rx_probe(struct platform_device *pdev)
 {
 	struct axi_jesd204_rx *jesd;
 	struct jesd204_dev *jdev;
-	struct resource *res;
 	int irq;
 	int ret;
 	u32 tmp;
@@ -1158,8 +1190,6 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return irq;
-	if (irq == 0)
-		return -ENXIO;
 
 	jesd = devm_kzalloc(&pdev->dev, sizeof(*jesd), GFP_KERNEL);
 	if (!jesd)
@@ -1168,8 +1198,7 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 	jesd->dev = &pdev->dev;
 	jesd->jdev = jdev;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	jesd->base = devm_ioremap_resource(&pdev->dev, res);
+	jesd->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(jesd->base))
 		return PTR_ERR(jesd->base);
 
@@ -1179,7 +1208,22 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	jesd->axi_clk = devm_clk_get(&pdev->dev, "s_axi_aclk");
+	jesd->reset_pll_datapath_gpio = devm_gpiod_get_optional(&pdev->dev,
+		"pll-datapath-reset", GPIOD_OUT_LOW);
+	if (IS_ERR(jesd->reset_pll_datapath_gpio))
+		return PTR_ERR(jesd->reset_pll_datapath_gpio);
+
+	jesd->reset_datapath_gpio = devm_gpiod_get_optional(&pdev->dev,
+		"datapath-reset", GPIOD_OUT_LOW);
+	if (IS_ERR(jesd->reset_datapath_gpio))
+		return PTR_ERR(jesd->reset_datapath_gpio);
+
+	jesd->reset_done_gpio = devm_gpiod_get_optional(&pdev->dev,
+		"reset-done", GPIOD_IN);
+	if (IS_ERR(jesd->reset_done_gpio))
+		return PTR_ERR(jesd->reset_done_gpio);
+
+	jesd->axi_clk = devm_clk_get_enabled(&pdev->dev, "s_axi_aclk");
 	if (IS_ERR(jesd->axi_clk))
 		return PTR_ERR(jesd->axi_clk);
 
@@ -1209,10 +1253,6 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 	if (IS_ERR(jesd->sysref_clk))
 		return PTR_ERR(jesd->sysref_clk);
 
-	ret = clk_prepare_enable(jesd->axi_clk);
-	if (ret)
-		return ret;
-
 	jesd->axi_clk_freq = clk_get_rate(jesd->axi_clk);
 	if (!jesd->axi_clk_freq)
 		jesd->axi_clk_freq = 100000000; /* 100 MHz */
@@ -1220,7 +1260,12 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 	if (jesd->conv2_clk) {
 		ret = clk_prepare_enable(jesd->conv2_clk);
 		if (ret)
-			goto err_axi_clk_disable;
+			return ret;
+
+		ret = devm_add_action_or_reset(&pdev->dev, axi_jesd204_clk_disable,
+					       jesd->conv2_clk);
+		if (ret)
+			return ret;
 	}
 
 	jesd->num_lanes = readl_relaxed(jesd->base + JESD204_RX_REG_SYNTH_NUM_LANES);
@@ -1238,13 +1283,17 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 	} else if (jesd->encoder >= JESD204_ENCODER_MAX) {
 		dev_err(&pdev->dev, "Invalid encoder value from HDL core %u\n",
 			jesd->encoder);
-		goto err_conv2_clk_disable;
+		return ret;
 	}
+
+	ret = devm_add_action_or_reset(&pdev->dev, axi_jesd204_rx_teardown, jesd);
+	if (ret)
+		return ret;
 
 	if (!jesd->jdev) {
 		ret = axi_jesd204_init_non_framework(&pdev->dev, jesd);
 		if (ret)
-			goto err_conv2_clk_disable;
+			return ret;
 	}
 
 	writel_relaxed(0xff, jesd->base + JESD204_RX_REG_IRQ_PENDING);
@@ -1258,7 +1307,7 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 						IRQF_ONESHOT, dev_name(&pdev->dev),
 						jesd);
 		if (ret)
-			goto err_uninit_non_framework;
+			return ret;
 
 		disable_irq(irq);
 
@@ -1272,54 +1321,21 @@ static int axi_jesd204_rx_probe(struct platform_device *pdev)
 
 	axi_jesd204_rx_create_remove_devattrs(&pdev->dev, jesd, true);
 
-	ret = jesd204_fsm_start(jesd->jdev, JESD204_LINKS_ALL);
+	ret = devm_add_action_or_reset(&pdev->dev, axi_jesd204_rx_rmattr, jesd);
 	if (ret)
-		goto err_remove_debugfs;
+		return ret;
 
-	dev_info(&pdev->dev, "AXI-JESD204-RX (%d.%.2d.%c) at 0x%08llX. Encoder %s, width %u/%u, lanes %d%s.",
-		ADI_AXI_PCORE_VER_MAJOR(jesd->version),
-		ADI_AXI_PCORE_VER_MINOR(jesd->version),
-		ADI_AXI_PCORE_VER_PATCH(jesd->version),
-		(unsigned long long)res->start,
-		jesd204_encoder_str(jesd->encoder),
-		jesd->data_path_width,
-		jesd->tpl_data_path_width,
-		jesd->num_lanes,
-		jdev ? ", jesd204-fsm" : "");
+	if (jesd->jdev) {
+		ret = devm_jesd204_fsm_start(&pdev->dev, jesd->jdev, JESD204_LINKS_ALL);
+		if (ret)
+			return ret;
+	}
 
-	return 0;
-
-err_remove_debugfs:
-	axi_jesd204_rx_create_remove_devattrs(&pdev->dev, jesd, false);
-err_uninit_non_framework:
-	if (!jesd->jdev)
-		of_clk_del_provider(pdev->dev.of_node);
-err_conv2_clk_disable:
-	clk_disable_unprepare(jesd->conv2_clk);
-err_axi_clk_disable:
-	clk_disable_unprepare(jesd->axi_clk);
-
-	return ret;
-}
-
-static int axi_jesd204_rx_remove(struct platform_device *pdev)
-{
-	struct axi_jesd204_rx *jesd = platform_get_drvdata(pdev);
-
-	jesd204_fsm_stop(jesd->jdev, JESD204_LINKS_ALL);
-
-	axi_jesd204_rx_create_remove_devattrs(&pdev->dev, jesd, false);
-
-	if (!jesd->jdev)
-		of_clk_del_provider(pdev->dev.of_node);
-
-	writel_relaxed(0xff, jesd->base + JESD204_RX_REG_IRQ_PENDING);
-	writel_relaxed(0x00, jesd->base + JESD204_RX_REG_IRQ_ENABLE);
-
-	writel_relaxed(0x1, jesd->base + JESD204_RX_REG_LINK_DISABLE);
-
-	clk_disable_unprepare(jesd->conv2_clk);
-	clk_disable_unprepare(jesd->axi_clk);
+	dev_info(&pdev->dev, "AXI-JESD204-RX (%d.%.2d.%c). Encoder %s, width %u/%u, lanes %d%s.",
+		 ADI_AXI_PCORE_VER_MAJOR(jesd->version), ADI_AXI_PCORE_VER_MINOR(jesd->version),
+		 ADI_AXI_PCORE_VER_PATCH(jesd->version), jesd204_encoder_str(jesd->encoder),
+		 jesd->data_path_width, jesd->tpl_data_path_width, jesd->num_lanes,
+		 jdev ? ", jesd204-fsm" : "");
 
 	return 0;
 }
@@ -1329,11 +1345,10 @@ static const struct of_device_id axi_jesd204_rx_of_match[] = {
 	{ .compatible = "adi,axi-jesd204-rx-1.3" },
 	{ /* end of list */ },
 };
-MODULE_DEVICE_TABLE(of, adxcvr_of_match);
+MODULE_DEVICE_TABLE(of, axi_jesd204_rx_of_match);
 
 static struct platform_driver axi_jesd204_rx_driver = {
 	.probe = axi_jesd204_rx_probe,
-	.remove = axi_jesd204_rx_remove,
 	.driver = {
 		.name = "axi-jesd204-rx",
 		.of_match_table = axi_jesd204_rx_of_match,

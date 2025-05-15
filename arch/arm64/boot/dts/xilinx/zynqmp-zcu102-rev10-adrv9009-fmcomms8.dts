@@ -206,21 +206,9 @@
 			reg = <0x9d420000 0x10000>;
 			#dma-cells = <1>;
 			#clock-cells = <0>;
+			dma-coherent;
 			interrupts = <0 106 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 73>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <128>;
-					adi,source-bus-type = <2>;
-					adi,destination-bus-width = <128>;
-					adi,destination-bus-type = <0>;
-				};
-			};
 		};
 
 		rx_obs_dma: dma@9d440000 {
@@ -228,21 +216,9 @@
 			reg = <0x9d440000 0x10000>;
 			#dma-cells = <1>;
 			#clock-cells = <0>;
+			dma-coherent;
 			interrupts = <0 104 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 73>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <128>;
-					adi,source-bus-type = <2>;
-					adi,destination-bus-width = <128>;
-					adi,destination-bus-type = <0>;
-				};
-			};
 		};
 
 		tx_dma: dma@9d400000  {
@@ -250,21 +226,9 @@
 			reg = <0x9d400000 0x10000>;
 			#dma-cells = <1>;
 			#clock-cells = <0>;
+			dma-coherent;
 			interrupts = <0 105 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 73>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <128>;
-					adi,source-bus-type = <0>;
-					adi,destination-bus-width = <256>;
-					adi,destination-bus-type = <1>;
-				};
-			};
 		};
 
 		axi_adrv9009_core_rx: axi-adrv9009-rx-hpc@85a00000 {

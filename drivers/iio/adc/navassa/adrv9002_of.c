@@ -5,10 +5,12 @@
  * Copyright 2022 Analog Devices Inc.
  */
 #include <linux/device.h>
+#include <linux/errno.h>
 #include <linux/gpio/consumer.h>
 #include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/spi/spi.h>
+#include <linux/string.h>
 
 #include "adrv9002.h"
 #include "adi_adrv9001_dpd_types.h"
@@ -615,6 +617,20 @@ static int adrv9002_parse_dpd(const struct adrv9002_rf_phy *phy,
 	if (!of_property_read_bool(node, "adi,dpd"))
 		return 0;
 
+	/*
+	 * Ignore DPD if the chip does not support it. The only reason this is not returning
+	 * an error is for backward compatibility with older device tree files for adrv9003 which
+	 * might wrongly enable DPD. And some users might have just copy pasted those DTs but
+	 * don't really care or use DPD and so, it would be cumbersome to start failing to probe all
+	 * of the sudden. Therefore, just warn about this and ignore it (and let user remove the
+	 * property).
+	 */
+	if (!phy->chip->has_dpd) {
+		dev_warn(&phy->spi->dev, "DPD not supported on this device (%s)! Ignoring....\n",
+			 phy->chip->name);
+		return 0;
+	}
+
 	tx->dpd_init = devm_kzalloc(&phy->spi->dev, sizeof(*tx->dpd_init), GFP_KERNEL);
 	if (!tx->dpd_init)
 		return -ENOMEM;
@@ -720,6 +736,7 @@ static int adrv9002_parse_tx_dt(struct adrv9002_rf_phy *phy,
 {
 	const char *mux_label_2 = channel ? "tx2-mux-ctl2" : "tx1-mux-ctl2";
 	const char *mux_label = channel ? "tx2-mux-ctl" : "tx1-mux-ctl";
+	const char *en_label = channel ? "tx2-enable" : "tx1-enable";
 	struct adrv9002_tx_chan *tx = &phy->tx_channels[channel];
 	int ret;
 
@@ -756,6 +773,11 @@ static int adrv9002_parse_tx_dt(struct adrv9002_rf_phy *phy,
 							       GPIOD_OUT_HIGH, mux_label_2);
 	if (IS_ERR(tx->channel.mux_ctl_2))
 		return PTR_ERR(tx->channel.mux_ctl_2);
+
+	tx->channel.ensm = devm_fwnode_gpiod_get_optional(&phy->spi->dev, node, "enable",
+							  GPIOD_OUT_LOW, en_label);
+	if (IS_ERR(tx->channel.ensm))
+		return PTR_ERR(tx->channel.ensm);
 
 	ret = adrv9002_parse_dpd(phy, node, tx);
 	if (ret)
@@ -1047,6 +1069,77 @@ out:
 	return ret;
 }
 
+static int adrv9002_parse_port_switch(struct adrv9002_rf_phy *phy, struct device_node *node)
+{
+	static const char *const port_switch_modes[] = {
+		"auto",
+		"manual",
+	};
+	const char *mode;
+	int ret;
+
+	ret = of_property_read_string(node, "adi,rx-port-switch", &mode);
+	if (ret)
+		/* not a mandatory property... Ignoring errors...*/
+		return 0;
+
+	ret = match_string(port_switch_modes, ARRAY_SIZE(port_switch_modes), mode);
+	if (ret < 0) {
+		dev_err(&phy->spi->dev, "Invalid port switch mode(%s)\n", mode);
+		return -EINVAL;
+	}
+
+	phy->port_switch.enable = true;
+	if (ret > 0) {
+		phy->port_switch.manualRxPortSwitch = true;
+		/*
+		 * In manual mode, we still need to provide the carrier auto limits otherwise
+		 * the API fails and they will also be used for calibration. Hence, let`s give
+		 * the carrier full range. It will make running calibration really slow but needed
+		 * so that we can use all the carriers. Solution is to use warmboot...
+		 */
+		phy->port_switch.minFreqPortA_Hz = ADI_ADRV9001_CARRIER_FREQUENCY_MIN_HZ;
+		phy->port_switch.maxFreqPortA_Hz = ADI_ADRV9001_CARRIER_FREQUENCY_MAX_HZ / 2;
+		phy->port_switch.minFreqPortB_Hz = ADI_ADRV9001_CARRIER_FREQUENCY_MAX_HZ / 2 + 1;
+		phy->port_switch.maxFreqPortB_Hz = ADI_ADRV9001_CARRIER_FREQUENCY_MAX_HZ;
+		return 0;
+	}
+
+	/*
+	 * Just making sure the properties are given... Validation of the values is already done
+	 * later by the API when configuring the device.
+	 */
+	ret = of_property_read_u64(node, "adi,min-carrier-port-a-hz",
+				   &phy->port_switch.minFreqPortA_Hz);
+	if (ret) {
+		dev_err(&phy->spi->dev, "adi,min-carrier-port-a-hz mandatory in automatic mode\n");
+		return ret;
+	}
+
+	ret = of_property_read_u64(node, "adi,max-carrier-port-a-hz",
+				   &phy->port_switch.maxFreqPortA_Hz);
+	if (ret) {
+		dev_err(&phy->spi->dev, "adi,max-carrier-port-a-hz mandatory in automatic mode\n");
+		return ret;
+	}
+
+	ret = of_property_read_u64(node, "adi,min-carrier-port-b-hz",
+				   &phy->port_switch.minFreqPortB_Hz);
+	if (ret) {
+		dev_err(&phy->spi->dev, "adi,min-carrier-port-b-hz mandatory in automatic mode\n");
+		return ret;
+	}
+
+	ret = of_property_read_u64(node, "adi,max-carrier-port-b-hz",
+				   &phy->port_switch.maxFreqPortB_Hz);
+	if (ret) {
+		dev_err(&phy->spi->dev, "adi,max-carrier-port-b-hz mandatory in automatic mode\n");
+		return ret;
+	}
+
+	return 0;
+}
+
 static int adrv9002_parse_rx_dt(struct adrv9002_rf_phy *phy,
 				struct device_node *node,
 				const int channel)
@@ -1054,9 +1147,15 @@ static int adrv9002_parse_rx_dt(struct adrv9002_rf_phy *phy,
 	const char *rxb_mux_label = channel ? "rx2b-mux-ctl" : "rx1b-mux-ctl";
 	const char *mux_label = channel ? "rx2a-mux-ctl" : "rx1a-mux-ctl";
 	const char *gpio_label = channel ? "orx2" : "orx1";
+	const char *en_label = channel ? "rx2-enable" : "rx1-enable";
 	struct adrv9002_rx_chan *rx = &phy->rx_channels[channel];
 	int ret;
 	u32 min_gain, max_gain;
+
+	if (channel >= phy->chip->n_rx) {
+		dev_err(&phy->spi->dev, "RX%d not supported for this device\n", channel + 1);
+		return -EINVAL;
+	}
 
 	ret = adrv9002_parse_rx_agc_dt(phy, node, rx);
 	if (ret)
@@ -1121,6 +1220,11 @@ static int adrv9002_parse_rx_dt(struct adrv9002_rf_phy *phy,
 							       GPIOD_OUT_HIGH, rxb_mux_label);
 	if (IS_ERR(rx->channel.mux_ctl_2))
 		return PTR_ERR(rx->channel.mux_ctl_2);
+
+	rx->channel.ensm = devm_fwnode_gpiod_get_optional(&phy->spi->dev, node, "enable",
+							  GPIOD_OUT_LOW, en_label);
+	if (IS_ERR(rx->channel.ensm))
+		return PTR_ERR(rx->channel.ensm);
 
 	ret = ADRV9002_OF_RX_OPTIONAL("adi,mcs-read-delay", 1, 1, 15,
 				      rx->channel.mcs_delay.readDelay);
@@ -1282,6 +1386,28 @@ int adrv9002_parse_dt(struct adrv9002_rf_phy *phy)
 {
 	struct device_node *parent = phy->spi->dev.of_node;
 	int ret;
+
+	ret = ADRV9002_OF_U32_GET_VALIDATE(&phy->spi->dev, parent, "adi,dev-clkout-div",
+					   ADI_ADRV9001_DEVICECLOCKDIVISOR_2, 0,
+					   ADI_ADRV9001_DEVICECLOCKDIVISOR_DISABLED,
+					   phy->dev_clkout_div, false);
+	if (ret)
+		return ret;
+
+	phy->mcs_pulse_external = of_property_read_bool(parent, "adi,mcs-pulse-external");
+	phy->mcs_trigger_external = of_property_read_bool(parent, "adi,mcs-trigger-external");
+
+	/*
+	 * The below settings don't make sense but everything should still be fully functional...
+	 * Hence, just spit out a Warning and move on...
+	 */
+	if (phy->mcs_trigger_external && phy->mcs_pulse_external)
+		dev_warn(&phy->spi->dev,
+			 "MCS trigger set to external but the MCS pulses are also external. Ignoring...\n");
+
+	ret = adrv9002_parse_port_switch(phy, parent);
+	if (ret)
+		return ret;
 
 	ret = adrv9002_parse_channels_dt(phy, parent);
 	if (ret)

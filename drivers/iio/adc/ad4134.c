@@ -15,7 +15,7 @@
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
-#include <linux/spi/spi-engine.h>
+#include <linux/spi/legacy-spi-engine.h>
 #include <linux/units.h>
 
 #include <linux/iio/buffer.h>
@@ -95,9 +95,8 @@ static int _ad4134_set_odr(struct ad4134_state *st, unsigned int odr)
 	 * tODR_HIGH_TIME = 3 * tDIGCLK
 	 * See datasheet page 10, Table 3. Data Interface Timing with Gated DCLK.
 	 */
-	state.duty_cycle = DIV_ROUND_CLOSEST_ULL(PICO * 6, st->sys_clk_rate);
-	state.period = DIV_ROUND_CLOSEST_ULL(PICO, odr);
-	state.time_unit = PWM_UNIT_PSEC;
+	state.duty_cycle = DIV_ROUND_CLOSEST_ULL(6ULL * NSEC_PER_SEC, st->sys_clk_rate);
+	state.period = DIV_ROUND_CLOSEST(NSEC_PER_SEC, odr);
 
 	ret = pwm_apply_state(st->odr_pwm, &state);
 	if (ret)
@@ -231,11 +230,11 @@ static int ad4134_buffer_postenable(struct iio_dev *indio_dev)
 	struct ad4134_state *st = iio_priv(indio_dev);
 	int ret;
 
-	ret = spi_engine_offload_load_msg(st->spi_engine, &st->buf_read_msg);
+	ret = legacy_spi_engine_offload_load_msg(st->spi_engine, &st->buf_read_msg);
 	if (ret)
 		return ret;
 
-	spi_engine_offload_enable(st->spi_engine, true);
+	legacy_spi_engine_offload_enable(st->spi_engine, true);
 
 	return 0;
 }
@@ -244,7 +243,7 @@ static int ad4134_buffer_predisable(struct iio_dev *indio_dev)
 {
 	struct ad4134_state *st = iio_priv(indio_dev);
 
-	spi_engine_offload_enable(st->spi_engine, false);
+	legacy_spi_engine_offload_enable(st->spi_engine, false);
 
 	return 0;
 }
@@ -261,11 +260,6 @@ static void ad4134_disable_regulators(void *data)
 	regulator_bulk_disable(ARRAY_SIZE(st->regulators), st->regulators);
 }
 
-static void ad4134_disable_clk(void *data)
-{
-	clk_disable_unprepare(data);
-}
-
 static void ad4134_disable_pwm(void *data)
 {
 	pwm_disable(data);
@@ -278,18 +272,9 @@ static int ad4134_setup(struct ad4134_state *st)
 	struct clk *clk;
 	int ret;
 
-	clk = devm_clk_get(dev, "sys_clk");
+	clk = devm_clk_get_enabled(dev, "sys_clk");
 	if (IS_ERR(clk))
 		return dev_err_probe(dev, PTR_ERR(clk), "Failed to find SYS clock\n");
-
-	ret = clk_prepare_enable(clk);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to enable SYS clock\n");
-
-	ret = devm_add_action_or_reset(dev, ad4134_disable_clk, clk);
-	if (ret)
-		return dev_err_probe(dev, ret,
-				     "Failed to add SYS clock disable action\n");
 
 	st->sys_clk_rate = clk_get_rate(clk);
 	if (!st->sys_clk_rate)
@@ -459,8 +444,7 @@ static int ad4134_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	ret = devm_iio_dmaengine_buffer_setup(dev, indio_dev, "rx",
-					      IIO_BUFFER_DIRECTION_IN);
+	ret = devm_iio_dmaengine_buffer_setup(dev, indio_dev, "rx");
 	if (ret)
 		return dev_err_probe(dev, ret,
 				     "Failed to allocate IIO DMA buffer\n");

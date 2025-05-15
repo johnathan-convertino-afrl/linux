@@ -35,6 +35,15 @@
 #define ADI_RX2_REG_OFF			0x1000
 #define ADI_TX1_REG_OFF			0x2000
 #define ADI_TX2_REG_OFF			0x4000
+#define ADI_MCS_REG_SYNC		0x500c
+#define ADI_MCS_SRC_MSK			BIT(0)
+#define ADI_MCS_SRC(x)			FIELD_PREP(ADI_MCS_SRC_MSK, x)
+#define ADI_MCS_TRIGGER_SRC_MSK		BIT(1)
+#define ADI_MCS_TRIGGER_SRC(x)		FIELD_PREP(ADI_MCS_TRIGGER_SRC_MSK, x)
+#define ADI_MCS_TRIGGER_MSK		BIT(2)
+#define ADI_MCS_TRIGGER(x)		FIELD_PREP(ADI_MCS_TRIGGER_MSK, x)
+#define ADI_MCS_SEL_MSK			BIT(3)
+#define ADI_MCS_SEL(x)			FIELD_PREP(ADI_MCS_SEL_MSK, x)
 #define ADI_TX_REG_RATE			0x4c
 #define ADI_TX_REG_CTRL_2		0x48
 #define ADI_TX_REG_CHAN_CTRL_7(c)	(0x0418 + (c) * 0x40)
@@ -47,9 +56,10 @@
 #define NUM_LANES(x)			FIELD_PREP(NUM_LANES_MASK, x)
 #define SDR_DDR_MASK			BIT(16)
 #define SDR_DDR(x)			FIELD_PREP(SDR_DDR_MASK, x)
-#define TX_ONLY_MASK			BIT(10)
-#define TX_ONLY(x)			FIELD_GET(TX_ONLY_MASK, x)
-
+#define TX_REF_CLK_MASK			GENMASK(11, 10)
+#define TX_REF_CLK(x)			FIELD_GET(TX_REF_CLK_MASK, x)
+#define TX_FLEX_REF_CLK_MASK		BIT(14)
+#define TX_FLEX_REF_CLK(x)		FIELD_GET(TX_FLEX_REF_CLK_MASK, x)
 #define IS_CMOS(cfg)			((cfg) & (ADI_CMOS_OR_LVDS_N))
 
 #define AIM_CHAN(_chan, _mod, _si, _bits, _sign)			\
@@ -73,33 +83,71 @@ static const unsigned long adrv9002_rx2tx2_available_scan_masks[] = {
 	0x00
 };
 
+#define AXI_ADRV9002_RX2TX2_INFO(_name, _NAME)						\
+	static const struct axiadc_chip_info axiadc_chip_info_##_name##_rx2tx2 = {	\
+		.name = #_NAME,								\
+		.max_rate = 245760000,							\
+		.max_testmode = 0,							\
+		.num_channels = 4,							\
+		.scan_masks = adrv9002_rx2tx2_available_scan_masks,			\
+		.channel[0] = AIM_CHAN(0, IIO_MOD_I, 0, 16, 'S'),			\
+		.channel[1] = AIM_CHAN(0, IIO_MOD_Q, 1, 16, 'S'),			\
+		.channel[2] = AIM_CHAN(1, IIO_MOD_I, 2, 16, 'S'),			\
+		.channel[3] = AIM_CHAN(1, IIO_MOD_Q, 3, 16, 'S'),			\
+}
+
+AXI_ADRV9002_RX2TX2_INFO(adrv9002, ADRV9002);
+AXI_ADRV9002_RX2TX2_INFO(adrv9003, ADRV9003);
+AXI_ADRV9002_RX2TX2_INFO(adrv9004, ADRV9004);
+AXI_ADRV9002_RX2TX2_INFO(adrv9006, ADRV9006);
+
 static const unsigned long adrv9002_available_scan_masks[] = {
 	0x01, 0x02, 0x03, 0x00
 };
 
-static const struct axiadc_chip_info axiadc_chip_info_tbl[] = {
-	[ID_ADRV9002_RX2TX2] = {
-		.name = "ADRV9002",
-		.max_rate = 245760000,
-		.max_testmode = 0,
-		.num_channels = 4,
-		.scan_masks = adrv9002_rx2tx2_available_scan_masks,
-		.channel[0] = AIM_CHAN(0, IIO_MOD_I, 0, 16, 'S'),
-		.channel[1] = AIM_CHAN(0, IIO_MOD_Q, 1, 16, 'S'),
-		.channel[2] = AIM_CHAN(1, IIO_MOD_I, 2, 16, 'S'),
-		.channel[3] = AIM_CHAN(1, IIO_MOD_Q, 3, 16, 'S'),
-	},
-	[ID_ADRV9002] = {
-		.name = "ADRV9002",
-		.max_rate = 245760000,
-		.max_testmode = 0,
-		.num_channels = 2,
-		.scan_masks = adrv9002_available_scan_masks,
-		.channel[0] = AIM_CHAN(0, IIO_MOD_I, 0, 16, 'S'),
-		.channel[1] = AIM_CHAN(0, IIO_MOD_Q, 1, 16, 'S'),
+#define AXI_ADRV9002_INFO(_name, _NAME)						\
+	static const struct axiadc_chip_info axiadc_chip_info_##_name = {	\
+		.name = #_NAME,							\
+		.max_rate = 245760000,						\
+		.max_testmode = 0,						\
+		.num_channels = 2,						\
+		.scan_masks = adrv9002_available_scan_masks,			\
+		.channel[0] = AIM_CHAN(0, IIO_MOD_I, 0, 16, 'S'),		\
+		.channel[1] = AIM_CHAN(0, IIO_MOD_Q, 1, 16, 'S'),		\
+}
 
-	},
-};
+AXI_ADRV9002_INFO(adrv9002, ADRV9002);
+AXI_ADRV9002_INFO(adrv9003, ADRV9003);
+AXI_ADRV9002_INFO(adrv9004, ADRV9004);
+AXI_ADRV9002_INFO(adrv9005, ADRV9005);
+AXI_ADRV9002_INFO(adrv9006, ADRV9006);
+
+static const struct axiadc_chip_info *
+adrv9002_get_axi_info(enum ad9002_device_id id)
+{
+	switch (id) {
+	case ID_ADRV9002:
+		return &axiadc_chip_info_adrv9002;
+	case ID_ADRV9003:
+		return &axiadc_chip_info_adrv9003;
+	case ID_ADRV9004:
+		return &axiadc_chip_info_adrv9004;
+	case ID_ADRV9005:
+		return &axiadc_chip_info_adrv9005;
+	case ID_ADRV9006:
+		return &axiadc_chip_info_adrv9006;
+	case ID_ADRV9002_RX2TX2:
+		return &axiadc_chip_info_adrv9002_rx2tx2;
+	case ID_ADRV9003_RX2TX2:
+		return &axiadc_chip_info_adrv9003_rx2tx2;
+	case ID_ADRV9004_RX2TX2:
+		return &axiadc_chip_info_adrv9004_rx2tx2;
+	case ID_ADRV9006_RX2TX2:
+		return &axiadc_chip_info_adrv9006_rx2tx2;
+	default:
+		return NULL;
+	}
+}
 
 static int adrv9002_read_raw(struct iio_dev *indio_dev,
 			     struct iio_chan_spec const *chan,
@@ -206,6 +254,10 @@ int adrv9002_axi_interface_set(const struct adrv9002_rf_phy *phy, const u8 n_lan
 	return 0;
 }
 
+static const char * const adrv9002_tx_clk[ADRV9002_RX2_REF_CLK + 1] = {
+	"OWN REF", "RX1 REF", "RX2 REF"
+};
+
 static int adrv9002_post_setup(struct iio_dev *indio_dev)
 {
 	struct axiadc_state *st = iio_priv(indio_dev);
@@ -215,7 +267,6 @@ static int adrv9002_post_setup(struct iio_dev *indio_dev)
 	int i, ret;
 
 	num_chan = conv->chip_info->num_channels;
-
 	conv->indio_dev = indio_dev;
 
 	if (!phy->rx2tx2) {
@@ -247,12 +298,35 @@ static int adrv9002_post_setup(struct iio_dev *indio_dev)
 	else
 		phy->ssi_type = ADI_ADRV9001_SSI_TYPE_CMOS;
 
-	/*
-	 * Get tx core config to check if we support tx only profiles. 1 means that it's not
-	 * supported...
-	 */
-	axi_config = axiadc_read(st, AIM_AXI_REG(ADI_TX1_REG_OFF, ADI_REG_CONFIG));
-	phy->tx_only = !TX_ONLY(axi_config);
+	/* Get tx reference clock. It maybe be driven by it's own reference clock, RX1 or RX2 */
+	for (i = 0; i < phy->chip->n_tx; i++) {
+		unsigned int addr_off = i ? ADI_TX2_REG_OFF : ADI_TX1_REG_OFF;
+		struct adrv9002_tx_chan *tx = &phy->tx_channels[i];
+
+		axi_config = axiadc_read(st, AIM_AXI_REG(addr_off, ADI_REG_CONFIG));
+		/*
+		 * Does the HW supports fully configurable TX clocks assignments? If not, fallback
+		 * to the old behavior. That is, 0 on bit 10 still means TX own reference and 1
+		 * means driven by the RX on the same channel.
+		 */
+		if (TX_FLEX_REF_CLK(axi_config)) {
+			tx->rx_ref_clk = TX_REF_CLK(axi_config);
+			/*
+			 * Sanity check as this is directly used to dereference RX ports from
+			 * the channel array.
+			 */
+			if (tx->rx_ref_clk > ADRV9002_RX2_REF_CLK)
+				return -EINVAL;
+		} else {
+			/* only bit 10 matters in legacy designs */
+			tx->rx_ref_clk = TX_REF_CLK(axi_config) & BIT(0);
+			if (tx->rx_ref_clk && i)
+				tx->rx_ref_clk = ADRV9002_RX1_REF_CLK + i;
+		}
+
+		dev_dbg(&phy->spi->dev, "Tx%d SSI clk driven by %s\n", tx->channel.number,
+			adrv9002_tx_clk[tx->rx_ref_clk]);
+	}
 
 	ret = adrv9002_post_init(phy);
 	if (ret)
@@ -488,11 +562,12 @@ int adrv9002_axi_intf_tune(const struct adrv9002_rf_phy *phy, const bool tx, con
 				return ret;
 
 			if (tx) {
-				if (chann) {
-					ret = adrv9002_tx2_fixup(phy);
-					if (ret)
-						return ret;
-				}
+				if (phy->rx2tx2)
+					ret = adrv9002_tx_fixup_all(phy);
+				else
+					ret = adrv9002_tx_fixup(phy, chann);
+				if (ret)
+					return ret;
 				/*
 				 * we need to restart the tx test for every iteration since it's
 				 * the only way to reset the counters.
@@ -559,7 +634,6 @@ void adrv9002_axi_interface_enable(const struct adrv9002_rf_phy *phy, const int 
 
 int adrv9002_register_axi_converter(struct adrv9002_rf_phy *phy)
 {
-	int id = phy->chip->rx2tx2 ? ID_ADRV9002_RX2TX2 : ID_ADRV9002;
 	struct axiadc_converter *conv;
 	struct spi_device *spi = phy->spi;
 
@@ -567,7 +641,10 @@ int adrv9002_register_axi_converter(struct adrv9002_rf_phy *phy)
 	if (!conv)
 		return -ENOMEM;
 
-	conv->chip_info = &axiadc_chip_info_tbl[id];
+	conv->chip_info = adrv9002_get_axi_info(phy->chip->id);
+	if (!conv->chip_info)
+		return -ENODEV;
+
 	conv->write_raw = adrv9002_write_raw;
 	conv->read_raw = adrv9002_read_raw;
 	conv->post_setup = adrv9002_post_setup;
@@ -667,4 +744,40 @@ u32 adrv9002_axi_dds_rate_get(const struct adrv9002_rf_phy *phy, const int chan)
 
 	/* the rate is decremented by one when configured on the core */
 	return axiadc_read(st, AIM_AXI_REG(off, ADI_TX_REG_RATE)) + 1;
+}
+
+void adrv9002_axi_mcs_run(const struct adrv9002_rf_phy *phy)
+{
+	struct axiadc_converter *conv = spi_get_drvdata(phy->spi);
+	struct axiadc_state *st = iio_priv(conv->indio_dev);
+	u32 val;
+
+	if (phy->mcs_pulse_external) {
+		axiadc_write(st, ADI_MCS_REG_SYNC, ADI_MCS_SRC(0) | ADI_MCS_SEL(1));
+		return;
+	}
+
+	/* set it to internal */
+	val = ADI_MCS_SRC(1);
+	if (phy->mcs_trigger_external)
+		val |= ADI_MCS_TRIGGER_SRC(0) | ADI_MCS_SEL(1);
+	else
+		/* If the trigger src is internal, let's trigger it! */
+		val |= ADI_MCS_TRIGGER_SRC(1) | ADI_MCS_TRIGGER(1) | ADI_MCS_SEL(1);
+
+	axiadc_write(st, ADI_MCS_REG_SYNC, val);
+}
+
+void adrv9002_axi_mcs_done(const struct adrv9002_rf_phy *phy)
+{
+	struct axiadc_converter *conv = spi_get_drvdata(phy->spi);
+	struct axiadc_state *st = iio_priv(conv->indio_dev);
+
+	/*
+	 * Just set the full register to 0. The important bit is the MCS_SEL as we want to
+	 * get back into "DATA MODE" but since MCS can only run once, keep it simple and
+	 * just write 0. If we re-initialize or load a new profile, adrv9002_axi_mcs_prepare()
+	 * will still set everything up correctly.
+	 */
+	axiadc_write(st, ADI_MCS_REG_SYNC, 0);
 }

@@ -56,6 +56,12 @@ properties:
     $ref: /schemas/types.yaml#/definitions/uint32
     enum: [0, 1, 2, 3]
 
+  io-backends:
+    description: The iio backend reference.
+      Device can be optionally connected to the "axi-ad3552r IP" fpga-based
+      QSPI + DDR (Double Data Rate) controller to reach high speed transfers.
+    maxItems: 1
+
   '#address-cells':
     const: 1
 
@@ -124,6 +130,7 @@ patternProperties:
           - custom-output-range-config
 
 allOf:
+  - $ref: /schemas/spi/spi-peripheral-props.yaml#
   - if:
       properties:
         compatible:
@@ -192,26 +199,26 @@ additionalProperties: false
 examples:
   - |
     spi {
-      #address-cells = <1>;
-      #size-cells = <0>;
-      ad3552r@0 {
-              compatible = "adi,ad3552r";
-              reg = <0>;
-              spi-max-frequency = <20000000>;
-              #address-cells = <1>;
-              #size-cells = <0>;
-              channel@0 {
-                      reg = <0>;
-                      adi,output-range-microvolt = <0 10000000>;
-              };
-              channel@1 {
-                      reg = <1>;
-                      custom-output-range-config {
-                              adi,gain-offset = <5>;
-                              adi,gain-scaling-p-inv-log2 = <1>;
-                              adi,gain-scaling-n-inv-log2 = <2>;
-                              adi,rfb-ohms = <1>;
-                      };
+        #address-cells = <1>;
+        #size-cells = <0>;
+        ad3552r@0 {
+            compatible = "adi,ad3552r";
+            reg = <0>;
+            spi-max-frequency = <20000000>;
+            #address-cells = <1>;
+            #size-cells = <0>;
+            channel@0 {
+                reg = <0>;
+                adi,output-range-microvolt = <0 10000000>;
+            };
+            channel@1 {
+                reg = <1>;
+                custom-output-range-config {
+                    adi,gain-offset = <5>;
+                    adi,gain-scaling-p-inv-log2 = <1>;
+                    adi,gain-scaling-n-inv-log2 = <2>;
+                    adi,rfb-ohms = <1>;
+                };
             };
         };
     };

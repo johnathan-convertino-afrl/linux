@@ -26,7 +26,15 @@
 
 #define LTC2387_VREF		4096
 #define LTC2387_T_CNVH		8
-#define LTC2387_T_FIRSTCLK	70
+
+/*
+ * Minimal value for t_{FIRSTCLK} according to
+ * https://www.analog.com/media/en/technical-documentation/data-sheets/238718fa.pdf
+ * is 65 ns. Add some slack because there is some rounding involved in the PWM
+ * driver. With the PWM driver rounding to the nearest possible value, targeting
+ * 70 ns works for input clk rates >= 100 MHz.
+ */
+#define LTC2387_T_FIRSTCLK_NS	70
 
 #define KHz 1000
 #define MHz (1000 * KHz)
@@ -137,6 +145,8 @@ struct ltc2387_dev {
 	struct pwm_device *clk_en;
 	struct regulator *vref;
 	struct pwm_device *cnv;
+	struct pwm_waveform clk_gate_wf;
+	struct pwm_waveform cnv_wf;
 	struct clk *ref_clk;
 
 	unsigned int vref_mv;
@@ -145,19 +155,42 @@ struct ltc2387_dev {
 
 static int ltc2387_set_sampling_freq(struct ltc2387_dev *ltc, int freq)
 {
-	unsigned long long target, ref_clk_period_ps;
-	struct pwm_state clk_en_state, cnv_state;
+	unsigned long long ref_clk_period_ns;
+	struct pwm_waveform clk_gate_wf = { }, cnv_wf = { };
 	int ret, clk_en_time;
+	u32 rem;
 
-	target = DIV_ROUND_CLOSEST_ULL(ltc->ref_clk_rate, freq);
-	ref_clk_period_ps = DIV_ROUND_CLOSEST_ULL(1000000000000ULL,
-						  ltc->ref_clk_rate);
-	cnv_state.period = ref_clk_period_ps * target;
-	cnv_state.duty_cycle = ref_clk_period_ps;
-	cnv_state.phase = 0;
-	cnv_state.time_unit = PWM_UNIT_PSEC;
-	cnv_state.enabled = true;
-	ret = pwm_apply_state(ltc->cnv, &cnv_state);
+	ref_clk_period_ns = DIV_ROUND_UP(NSEC_PER_SEC, ltc->ref_clk_rate);
+
+	cnv_wf.duty_length_ns = ref_clk_period_ns;
+
+	/*
+	 * The goal here is that the PWM is configured with a minimal period not
+	 * less than 1 / freq (with freq measured in Hz).
+	 *
+	 * When a period P (measured in ns) is passed to pwm_apply_state(), the
+	 * actually implemented period is:
+	 *
+	 *      round_down(P * R / NSEC_PER_SEC) / R
+	 *
+	 * (measured in s) with R = ltc->ref_clk_rate. So we have:
+	 *
+	 *        round_down(P * R / NSEC_PER_SEC) / R ≥ 1 / freq
+	 *      ⟺ round_down(P * R / NSEC_PER_SEC) ≥ R / freq
+	 *
+	 * With the LHS being integer this is equivalent to:
+	 *
+	 *        round_down(P * R / NSEC_PER_SEC) ≥ round_up(R / freq)
+	 *      ⟺ P * R / NSEC_PER_SEC ≥ round_up(R / freq)
+	 *      ⟺ P ≥ round_up(R / freq) * NSEC_PER_SEC / R
+	 */
+
+	cnv_wf.period_length_ns = div_u64_rem((u64)DIV_ROUND_UP(ltc->ref_clk_rate, freq) * NSEC_PER_SEC,
+					      ltc->ref_clk_rate, &rem);
+	if (rem)
+		cnv_wf.period_length_ns += 1;
+
+	ret = pwm_set_waveform_might_sleep(ltc->cnv, &cnv_wf, false);
 	if (ret < 0)
 		return ret;
 
@@ -166,16 +199,16 @@ static int ltc2387_set_sampling_freq(struct ltc2387_dev *ltc, int freq)
 		clk_en_time = DIV_ROUND_UP_ULL(ltc->device_info->resolution, 4);
 	else
 		clk_en_time = DIV_ROUND_UP_ULL(ltc->device_info->resolution, 2);
-	clk_en_state.period = cnv_state.period;
-	clk_en_state.duty_cycle = ref_clk_period_ps * clk_en_time;
-	clk_en_state.phase = cnv_state.phase + LTC2387_T_FIRSTCLK;
-	clk_en_state.time_unit = PWM_UNIT_PSEC;
-	clk_en_state.enabled = true;
-	ret = pwm_apply_state(ltc->clk_en, &clk_en_state);
+
+	clk_gate_wf.period_length_ns = cnv_wf.period_length_ns;
+	clk_gate_wf.duty_length_ns = ref_clk_period_ns * clk_en_time;
+	clk_gate_wf.duty_offset_ns = LTC2387_T_FIRSTCLK_NS;
+
+	ret = pwm_set_waveform_might_sleep(ltc->clk_en, &clk_gate_wf, false);
 	if (ret < 0)
 		return ret;
 
-	ltc->sampling_freq = DIV_ROUND_CLOSEST_ULL(ltc->ref_clk_rate, target);
+	ltc->sampling_freq = freq;
 
 	return 0;
 }
@@ -266,10 +299,13 @@ static const struct of_device_id ltc2387_of_match[] = {
 		.compatible = "ltc2387-18-x4",
 		.data = &ltc2387_infos[ID_LTC2387_18_X4]
 	}, {
-		.compatible = "adaq2387-16",
+		.compatible = "adaq23875",
 		.data = &ltc2387_infos[ID_LTC2387_16]
 	}, {
-		.compatible = "adaq2387-18",
+		.compatible = "adaq23876",
+		.data = &ltc2387_infos[ID_LTC2387_16]
+	}, {
+		.compatible = "adaq23878",
 		.data = &ltc2387_infos[ID_LTC2387_18]
 	},
 	{}
@@ -355,8 +391,7 @@ static int ltc2387_probe(struct platform_device *pdev)
 	indio_dev->info = &ltc2387_info;
 	indio_dev->modes = INDIO_BUFFER_HARDWARE;
 	ret = devm_iio_dmaengine_buffer_setup(indio_dev->dev.parent,
-					      indio_dev, "rx",
-					      IIO_BUFFER_DIRECTION_IN);
+					      indio_dev, "rx");
 	if (ret)
 		return ret;
 

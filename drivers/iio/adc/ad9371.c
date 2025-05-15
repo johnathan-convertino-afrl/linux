@@ -2094,7 +2094,7 @@ static const struct iio_chan_spec_ext_info ad9371_phy_rx_ext_info[] = {
 	 * in Hz. Using scale is a bit ugly.
 	 */
 	IIO_ENUM_AVAILABLE("gain_control_mode", IIO_SHARED_BY_TYPE, &ad9371_agc_modes_available),
-	IIO_ENUM("gain_control_mode", false, &ad9371_agc_modes_available),
+	IIO_ENUM("gain_control_mode", IIO_SEPARATE, &ad9371_agc_modes_available),
 	_AD9371_EXT_RX_INFO("rssi", RSSI),
 	_AD9371_EXT_RX_INFO("quadrature_tracking_en", RX_QEC),
 	_AD9371_EXT_RX_INFO("temp_comp_gain", TEMPCOMP_GAIN),
@@ -2108,9 +2108,9 @@ static const struct iio_chan_spec_ext_info ad9371_phy_obs_rx_ext_info[] = {
 	 * in Hz. Using scale is a bit ugly.
 	 */
 	IIO_ENUM_AVAILABLE("gain_control_mode", IIO_SHARED_BY_TYPE, &ad9371_agc_modes_available),
-	IIO_ENUM("gain_control_mode", false, &ad9371_agc_modes_available),
+	IIO_ENUM("gain_control_mode", IIO_SEPARATE, &ad9371_agc_modes_available),
 	IIO_ENUM_AVAILABLE("rf_port_select", IIO_SHARED_BY_TYPE, &ad9371_rf_obs_rx_port_available),
-	IIO_ENUM("rf_port_select", false, &ad9371_rf_obs_rx_port_available),
+	IIO_ENUM("rf_port_select", IIO_SEPARATE, &ad9371_rf_obs_rx_port_available),
 	_AD9371_EXT_RX_INFO("quadrature_tracking_en", RX_QEC),
 	_AD9371_EXT_RX_INFO("rssi", RSSI),
 	_AD9371_EXT_RX_INFO("temp_comp_gain", TEMPCOMP_GAIN),
@@ -5109,10 +5109,12 @@ static int ad9371_probe(struct spi_device *spi)
 	if (ret < 0)
 		dev_warn(&spi->dev, "%s: failed to register debugfs", __func__);
 
-	if (!phy->jdev)
+	if (!phy->jdev) {
 		ad9371_info(phy);
+		return 0;
+	}
 
-	ret = jesd204_fsm_start(phy->jdev, JESD204_LINKS_ALL);
+	ret = devm_jesd204_fsm_start(&spi->dev, phy->jdev, JESD204_LINKS_ALL);
 	if (ret)
 		goto out_iio_device_unregister;
 

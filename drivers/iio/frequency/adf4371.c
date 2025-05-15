@@ -13,6 +13,7 @@
 #include <linux/gcd.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/sysfs.h>
 #include <linux/spi/spi.h>
@@ -726,7 +727,7 @@ static ssize_t adf4371_write(struct iio_dev *indio_dev,
 			break;
 
 		ret = regmap_update_bits(st->regmap, ADF4371_REG(0x20),
-					 ADF4371_AUX_FREQ_SEL_MSK,
+					 ADF4371_MUXOUT_EN_MSK,
 					 ADF4371_MUXOUT_EN(muxout_en));
 		if (ret < 0)
 			break;
@@ -1077,7 +1078,6 @@ static int adf4371_parse_dt(struct adf4371_state *st)
 {
 	unsigned char num_channels;
 	unsigned int channel, tmp;
-	struct fwnode_handle *child;
 	int ret, i;
 
 	if(device_property_read_bool(&st->spi->dev, "adi,spi-3wire-enable"))
@@ -1147,7 +1147,7 @@ static int adf4371_parse_dt(struct adf4371_state *st)
 	if (num_channels > st->chip_info->num_channels)
 		return -EINVAL;
 
-	device_for_each_child_node(&st->spi->dev, child) {
+	device_for_each_child_node_scoped(&st->spi->dev, child) {
 		ret = fwnode_property_read_u32(child, "reg", &channel);
 		if (ret)
 			return ret;

@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * dts file for FMCOMMS4 AD9364 on Xilinx ZynqMP ZCU102 RevB
  *
  * Copyright (C) 2016 Analog Devices Inc.
- *
- * Licensed under the GPL-2.
  */
 
 #include "zynqmp-zcu102-revB.dts"
@@ -44,19 +43,6 @@
 			#dma-cells = <1>;
 			interrupts = <0 109 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <64>;
-					adi,source-bus-type = <2>;
-					adi,destination-bus-width = <64>;
-					adi,destination-bus-type = <0>;
-				};
-			};
 		};
 
 		tx_dma: dma@80020000  {
@@ -65,19 +51,6 @@
 			#dma-cells = <1>;
 			interrupts = <0 108 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 71>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <64>;
-					adi,source-bus-type = <0>;
-					adi,destination-bus-width = <64>;
-					adi,destination-bus-type = <2>;
-				};
-			};
 		};
 
 		cf_ad9361_adc_core_0: cf-ad9361-lpc@80000000 {

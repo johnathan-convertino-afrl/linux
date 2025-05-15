@@ -227,8 +227,7 @@ static int ad9783_timing_adjust(struct ad9783_phy *phy)
 			ret = ad9783_seek(phy);
 			if (ret < 0)
 				return ret;
-
-		} while (ret > 0 && hld < AD9783_MAX_HLD);
+		} while ((ret == table[smp][SEEK]) && hld < (AD9783_MAX_HLD - 1));
 
 		table[smp][HLD] = hld;
 		hld = 0;
@@ -250,7 +249,7 @@ static int ad9783_timing_adjust(struct ad9783_phy *phy)
 			if (ret < 0)
 				return ret;
 
-		} while (ret > 0 && set < AD9783_MAX_SET);
+		} while ((ret == table[smp][SEEK]) && set < (AD9783_MAX_SET - 1));
 
 		table[smp][SET] = set;
 	}
@@ -841,6 +840,15 @@ static const struct of_device_id ad9783_of_match[] = {
 	{ .compatible = "adi,ad9783", .data = &ad9783_id},
 	{}
 };
+MODULE_DEVICE_TABLE(of, ad9783_of_match);
+
+static const struct spi_device_id ad9783_spi_id_table[] = {
+	{ "ad9780", (kernel_ulong_t)&ad9780_id},
+	{ "ad9781", (kernel_ulong_t)&ad9781_id},
+	{ "ad9783", (kernel_ulong_t)&ad9783_id},
+	{}
+};
+MODULE_DEVICE_TABLE(spi, ad9783_spi_id_table);
 
 static struct spi_driver ad9783_driver = {
 	.driver = {
@@ -848,6 +856,7 @@ static struct spi_driver ad9783_driver = {
 		.of_match_table = ad9783_of_match,
 	},
 	.probe = ad9783_probe,
+	.id_table = ad9783_spi_id_table,
 };
 module_spi_driver(ad9783_driver);
 

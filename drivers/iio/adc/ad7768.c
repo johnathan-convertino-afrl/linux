@@ -103,9 +103,9 @@ struct ad7768_avail_freq {
 struct ad7768_state {
 	struct spi_device *spi;
 	struct mutex lock;
-	struct regulator *vref;
 	struct clk *mclk;
 	struct gpio_chip gpiochip;
+	u64 vref_nv;
 	unsigned int datalines;
 	unsigned int sampling_freq;
 	enum ad7768_power_modes power_mode;
@@ -473,16 +473,9 @@ static ssize_t ad7768_scale(struct device *dev,
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	const struct iio_chan_spec *chan = &indio_dev->channels[0];
 	struct ad7768_state *st = ad7768_get_data(indio_dev);
-	u64 vref_nv;
 	u64 scale;
-	int ret;
 
-	ret = regulator_get_voltage(st->vref);
-	if (ret < 0)
-		return ret;
-
-	vref_nv = (u64)ret * NANO * 2;
-	scale = div64_ul(vref_nv, BIT(chan->scan_type.realbits));
+	scale = div64_ul(st->vref_nv, BIT(chan->scan_type.realbits));
 
 	return scnprintf(buf, PAGE_SIZE, "0.%012llu\n", scale);
 }
@@ -592,20 +585,6 @@ static const struct axiadc_chip_info ad7768_4_conv_chip_info = {
 
 static const unsigned long ad7768_available_scan_masks[]  = { 0xFF, 0x00 };
 
-static void ad7768_reg_disable(void *data)
-{
-	struct regulator *reg = data;
-
-	regulator_disable(reg);
-}
-
-static void ad7768_clk_disable(void *data)
-{
-	struct clk *clk = data;
-
-	clk_disable_unprepare(clk);
-}
-
 static int ad7768_datalines_from_dt(struct ad7768_state *st)
 {
 	const unsigned int *available_datalines;
@@ -687,7 +666,7 @@ static int ad7768_register(struct ad7768_state *st, struct iio_dev *indio_dev)
 	indio_dev->available_scan_masks = ad7768_available_scan_masks;
 
 	ret = devm_iio_dmaengine_buffer_setup(indio_dev->dev.parent, indio_dev,
-					      "rx", IIO_BUFFER_DIRECTION_IN);
+					      "rx");
 	if (ret)
 		return ret;
 
@@ -816,33 +795,19 @@ static int ad7768_probe(struct spi_device *spi)
 
 	st = iio_priv(indio_dev);
 
-	st->chip_info = device_get_match_data(&spi->dev);
-	if (!st->chip_info) {
-		st->chip_info = (void *)spi_get_device_id(spi)->driver_data;
-		if (!st->chip_info)
-			return PTR_ERR(st->chip_info);
-	}
+	st->chip_info = spi_get_device_match_data(spi);
+	if (!st->chip_info)
+		return -ENODEV;
 
-	st->vref = devm_regulator_get(&spi->dev, "vref");
-	if (IS_ERR(st->vref))
-		return PTR_ERR(st->vref);
-	ret = regulator_enable(st->vref);
-	if (ret)
-		return ret;
-
-	ret = devm_add_action_or_reset(&spi->dev, ad7768_reg_disable, st->vref);
-	if (ret)
-		return ret;
-
-	st->mclk = devm_clk_get(&spi->dev, "mclk");
-	if (IS_ERR(st->mclk))
-		return PTR_ERR(st->mclk);
-	ret = clk_prepare_enable(st->mclk);
+	ret = devm_regulator_get_enable_read_voltage(&spi->dev, "vref");
 	if (ret < 0)
 		return ret;
-	ret = devm_add_action_or_reset(&spi->dev, ad7768_clk_disable, st->mclk);
-	if (ret)
-		return ret;
+
+	st->vref_nv = (u64)ret * NANO * 2;
+
+	st->mclk = devm_clk_get_enabled(&spi->dev, "mclk");
+	if (IS_ERR(st->mclk))
+		return PTR_ERR(st->mclk);
 
 	st->spi = spi;
 

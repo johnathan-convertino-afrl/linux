@@ -47,21 +47,9 @@
 			reg = <0x9c400000 0x10000>;
 			#dma-cells = <1>;
 			#clock-cells = <0>;
+			dma-coherent;
 			interrupts = <0 109 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&zynqmp_clk 73>;
-
-			adi,channels {
-				#size-cells = <0>;
-				#address-cells = <1>;
-
-				dma-channel@0 {
-					reg = <0>;
-					adi,source-bus-width = <64>;
-					adi,source-bus-type = <2>;
-					adi,destination-bus-width = <64>;
-					adi,destination-bus-type = <0>;
-				};
-			};
 		};
 
 		axi_adrv9009_core_rx: axi-adrv9009-rx-hpc@84a00000 {
@@ -94,8 +82,8 @@
 			compatible = "adi,axi-clkgen-2.00.a";
 			reg = <0x83c10000 0x10000>;
 			#clock-cells = <0>;
-			clocks = <&zynqmp_clk 71>, <&clk0_ad9528 1>;
-			clock-names = "s_axi_aclk", "clkin1";
+			clocks = <&clk0_ad9528 1>, <&zynqmp_clk 71>;
+			clock-names = "clkin1", "s_axi_aclk";
 			clock-output-names = "axi_rx_clkgen";
 		};
 

@@ -59,7 +59,6 @@ static int __ltc235x_set_sampling_freq(struct ltc235x_state *st,
 	pwm_get_state(st->cnv_pwm, &cnv_state);
 	cnv_state.duty_cycle = LTC235X_TCNVH_NS;
 	cnv_state.period = DIV_ROUND_CLOSEST_ULL(NANO, freq);
-	cnv_state.time_unit = PWM_UNIT_NSEC;
 
 	return pwm_apply_state(st->cnv_pwm, &cnv_state);
 }
@@ -406,7 +405,7 @@ static const struct spi_device_id ltc235x_id[] = {
 	{ "ltc2358-18", (kernel_ulong_t)&ltc235x_chip_info[ID_LTC2358_18] },
 	{ },
 };
-MODULE_DEVICE_TABLE(spi, ltc2358_id);
+MODULE_DEVICE_TABLE(spi, ltc235x_id);
 
 static const struct of_device_id ltc235x_of_match[] = {
 	{ .compatible = "adi,ltc2353-16",
