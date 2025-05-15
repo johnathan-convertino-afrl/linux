@@ -14,4 +14,9 @@ dtb-$(CONFIG_ARCH_ZYNQ) += \
 	zynq-zturn.dtb \
 	zynq-zturn-v5.dtb \
 	zynq-zybo.dtb \
-	zynq-zybo-z7.dtb
+	zynq-zybo-z7.dtb \
+	zynq-zc702-ad9361-fmcomms2-3.dtb \
+	zynq-zc702-ad9361-fmcomms5.dtb \
+	zynq-zc706-ad9361-fmcomms2-3.dtb \
+	zynq-zc706-ad9361-fmcomms5.dtb \
+	zynq-zed-ad9361-fmcomms2-3.dtb

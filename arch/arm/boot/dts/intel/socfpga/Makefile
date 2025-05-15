@@ -14,4 +14,10 @@ dtb-$(CONFIG_ARCH_INTEL_SOCFPGA) += \
 	socfpga_cyclone5_socrates.dtb \
 	socfpga_cyclone5_sodia.dtb \
 	socfpga_cyclone5_vining_fpga.dtb \
-	socfpga_vt.dtb
+	socfpga_vt.dtb \
+	socfpga_arria10_hanpilot_adrv9371.dtb \
+	socfpga_arria10_hanpilot_adrv9375.dtb \
+	socfpga_arria10_hanpilot_fmcomms2-3.dtb \
+	socfpga_arria10_hanpilot_sdmmc.dtb \
+	socfpga_arria10_socdk_fmcomms2-3.dtb \
+	socfpga_arria10_socdk_fmcomms5.dtb \
