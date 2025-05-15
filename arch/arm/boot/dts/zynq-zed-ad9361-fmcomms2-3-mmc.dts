@@ -90,7 +90,7 @@
 		reg = <0>;
 		status = "okay";
 		voltage-ranges = <1800 3600>;
-		spi-max-frequency = <25000000>;
+		spi-max-frequency = <16000000>;
 		disable-wp;
 		disable-cd;
 	};

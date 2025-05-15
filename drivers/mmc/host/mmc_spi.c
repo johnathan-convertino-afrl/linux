@@ -1025,7 +1025,7 @@ static void mmc_spi_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	int			crc_retry = 5;
 	struct mmc_command	stop;
 
-#ifdef DEBUG
+
 	/* MMC core and layered drivers *MUST* issue SPI-aware commands */
 	{
 		struct mmc_command	*cmd;
@@ -1051,7 +1051,7 @@ static void mmc_spi_request(struct mmc_host *mmc, struct mmc_request *mrq)
 			return;
 		}
 	}
-#endif
+
 
 	/* request exclusive bus access */
 	spi_bus_lock(host->spi->master);
