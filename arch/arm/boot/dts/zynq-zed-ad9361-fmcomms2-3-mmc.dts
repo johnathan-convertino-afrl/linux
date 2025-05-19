@@ -20,6 +20,29 @@
 		#size-cells = <0x1>;
 		ranges;
 
+		bus_spi: spi@7c000000 {
+			compatible = "altr,spi-1.0";
+			reg = <0x7c000000 0x1000>;
+			interrupt-parent = <&intc>;
+			interrupts = <0 58 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clkc 15>;
+			clock-names = "pclk";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-chipselect = <1>;
+			status = "okay";
+
+			mmc-slot@0 {
+				compatible = "mmc-spi-slot";
+				reg = <0>;
+				status = "okay";
+				voltage-ranges = <1800 3600>;
+				spi-max-frequency = <25000000>;
+				disable-wp;
+				disable-cd;
+			};
+		};
+
 		fmc_i2c: i2c@41620000 {
 			compatible = "xlnx,axi-iic-1.01.b", "xlnx,xps-iic-2.00.a";
 			reg = <0x41620000 0x10000>;
@@ -82,16 +105,4 @@
 
 &spi1 {
 	status = "okay";
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	mmc-slot@0 {
-		compatible = "mmc-spi-slot";
-		reg = <0>;
-		status = "okay";
-		voltage-ranges = <1800 3600>;
-		spi-max-frequency = <16000000>;
-		disable-wp;
-		disable-cd;
-	};
 };
