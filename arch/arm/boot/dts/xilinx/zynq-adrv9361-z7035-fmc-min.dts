@@ -99,88 +99,88 @@
 		#size-cells = <0x1>;
 		ranges;
 
-	leds {
-		compatible = "gpio-leds";
-		led0 {
-			label = "led0:red";
-			gpios = <&gpio0 61 0>;
+		leds {
+			compatible = "gpio-leds";
+			led0 {
+				label = "led0:red";
+				gpios = <&gpio0 61 0>;
+			};
+
+			led1 {
+				label = "led1:red";
+				gpios = <&gpio0 59 0>;
+			};
+
+			led2 {
+				label = "led2:red";
+				gpios = <&gpio0 58 0>;
+			};
+
+			led3 {
+				label = "led3:red";
+				gpios = <&gpio0 60 0>;
+			};
 		};
 
-		led1 {
-			label = "led1:red";
-			gpios = <&gpio0 59 0>;
-		};
+		gpio_keys {
+			compatible = "gpio-keys";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			autorepeat;
 
-		led2 {
-			label = "led2:red";
-			gpios = <&gpio0 58 0>;
-		};
+			bt0 {
+				label = "BT0";
+				linux,code = <KEY_LEFT>;
+				gpios = <&gpio0 54 0>;
+			};
 
-		led3 {
-			label = "led3:red";
-			gpios = <&gpio0 60 0>;
+			bt1 {
+				label = "BT1";
+				linux,code = <KEY_RIGHT>;
+				gpios = <&gpio0 55 0>;
+			};
+
+			bt2 {
+				label = "BT2";
+				linux,code = <KEY_ENTER>;
+				gpios = <&gpio0 56 0>;
+			};
+
+			bt3 {
+				label = "BT3";
+				linux,code = <KEY_ESC>;
+				gpios = <&gpio0 57 0>;
+			};
+
+			sw0 {
+				label = "SW0";
+				linux,input-type = <5>;
+				linux,code = <13>;
+				gpios = <&gpio0 65 0>;
+			};
+
+			sw1 {
+				label = "SW1";
+				linux,input-type = <5>;
+				linux,code = <1>;
+				gpios = <&gpio0 62 0>;
+			};
+
+			sw2 {
+				label = "SW2";
+				linux,input-type = <5>;
+				linux,code = <2>;
+				gpios = <&gpio0 64 0>;
+			};
+
+			sw3 {
+				label = "SW3";
+				linux,input-type = <5>;
+				linux,code = <3>;
+				gpios = <&gpio0 63 0>;
+			};
 		};
 	};
-
-	gpio_keys {
-		compatible = "gpio-keys";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		autorepeat;
-
-		bt0 {
-			label = "BT0";
-			linux,code = <KEY_LEFT>;
-			gpios = <&gpio0 54 0>;
-		};
-
-		bt1 {
-			label = "BT1";
-			linux,code = <KEY_RIGHT>;
-			gpios = <&gpio0 55 0>;
-		};
-
-		bt2 {
-			label = "BT2";
-			linux,code = <KEY_ENTER>;
-			gpios = <&gpio0 56 0>;
-		};
-
-		bt3 {
-			label = "BT3";
-			linux,code = <KEY_ESC>;
-			gpios = <&gpio0 57 0>;
-		};
-
-		sw0 {
-			label = "SW0";
-			linux,input-type = <5>;
-			linux,code = <13>;
-			gpios = <&gpio0 65 0>;
-		};
-
-		sw1 {
-			label = "SW1";
-			linux,input-type = <5>;
-			linux,code = <1>;
-			gpios = <&gpio0 62 0>;
-		};
-
-		sw2 {
-			label = "SW2";
-			linux,input-type = <5>;
-			linux,code = <2>;
-			gpios = <&gpio0 64 0>;
-		};
-
-		sw3 {
-			label = "SW3";
-			linux,input-type = <5>;
-			linux,code = <3>;
-			gpios = <&gpio0 63 0>;
-		};
-	};
-
 };
 
 &spi0 {
