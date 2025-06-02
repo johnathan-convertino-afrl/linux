@@ -195,7 +195,7 @@
 
 #define fmc_spi sys_spi
 
-#include "../adi-fmcomms2.dtsi"
+#include "../../adi-fmcomms2.dtsi"
 
 &adc0_ad9361 {
   /delete-property/ spi-cpha;

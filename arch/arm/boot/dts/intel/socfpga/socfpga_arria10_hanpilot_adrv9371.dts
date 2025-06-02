@@ -395,7 +395,7 @@
 
 #define fmc_spi sys_spi
 
-#include "../adi-adrv9371.dtsi"
+#include "../../adi-adrv9371.dtsi"
 
 &clk0_ad9528 {
 	reg = <0>;
