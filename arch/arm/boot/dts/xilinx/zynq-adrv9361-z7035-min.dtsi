@@ -119,16 +119,16 @@
 		ranges;
 
 
-		axi_i2c0: i2c@41600000 {
-			compatible = "xlnx,axi-iic-1.02.a", "xlnx,xps-iic-2.00.a";
-			reg = <0x41600000 0x10000>;
+		axi_i2c0: i2c@41620000 {
+			compatible = "xlnx,axi-iic-1.01.b", "xlnx,xps-iic-2.00.a";
+			reg = <0x41620000 0x10000>;
 			interrupt-parent = <&intc>;
-			interrupts = <0 58 4>;
+			interrupts = <0 55 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clkc 15>;
 			clock-names = "pclk";
 
-			#address-cells = <1>;
 			#size-cells = <0>;
+			#address-cells = <1>;
 
 			adm1166: adm1166@68 {
 				compatible = "adi,adm1166";
