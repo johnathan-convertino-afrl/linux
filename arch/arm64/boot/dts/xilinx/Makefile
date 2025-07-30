@@ -35,6 +35,7 @@ dtb-$(CONFIG_ARCH_ZYNQMP) += zynqmp-p-a2197-00-revA-x-prc-05-revA.dtbo
 dtb-$(CONFIG_ARCH_ZYNQMP) += zynqmp-p-a2197-00-revA.dtb
 dtb-$(CONFIG_ARCH_ZYNQMP) += zynqmp-sc-revB.dtb
 dtb-$(CONFIG_ARCH_ZYNQMP) += zynqmp-sc-revC.dtb
+dtb-$(CONFIG_ARCH_ZYNQMP) += zynqmp-rfsoc-4x2.dtb
 
 zynqmp-p-a2197-00-revA-x-prc-01-revA-dtbs := zynqmp-p-a2197-00-revA.dtb zynqmp-p-a2197-00-revA-x-prc-01-revA.dtbo
 zynqmp-p-a2197-00-revA-x-prc-02-revA-dtbs := zynqmp-p-a2197-00-revA.dtb zynqmp-p-a2197-00-revA-x-prc-02-revA.dtbo

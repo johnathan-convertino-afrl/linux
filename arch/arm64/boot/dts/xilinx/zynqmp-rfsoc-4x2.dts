@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+* dts file for Realdigital RFSoC 4x2
+*
+* Updated by Jay Convertino, AFRL
+* (C) Copyright 2017 - 2019, Xilinx, Inc.
+*
+* Michal Simek <michal.simek@xilinx.com>
+*/
+
+/dts-v1/;
+
+#include "zynqmp.dtsi"
+#include "zynqmp-clk-ccf.dtsi"
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/pinctrl-zynqmp.h>
+#include <dt-bindings/phy/phy.h>
+
+/ {
+  model = "ZynqMP RFSoC 4x2";
+  compatible = "xlnx,zynqmp-rfsoc-4x2", "xlnx,zynqmp";
+
+  aliases {
+    ethernet0 = &gem1;
+    gpio0 = &gpio;
+    i2c0 = &i2c0;
+    i2c1 = &i2c1;
+    mmc0 = &sdhci0;
+    serial0 = &uart1;
+    usb0 = &usb0;
+  };
+
+  chosen {
+    bootargs = "earlycon";
+    stdout-path = "serial0:115200n8";
+  };
+
+  memory@0 {
+    device_type = "memory";
+    reg = <0x0 0x0 0x0 0x80000000>, <0x8 0x00000000 0x0 0x80000000>;
+  };
+  
+  dp_clk:psgtr_dp_clock {
+    compatible = "fixed-clock";
+    #clock-cells = <0x00>;
+    clock-frequency = <27000000>;
+  };
+
+  usb_clk:psgtr_usb_clock {
+    compatible = "fixed-clock";
+    #clock-cells = <0x00>;
+    clock-frequency = <26000000>;
+  };
+};
+
+&gem1 {
+	status = "okay";
+	phy-handle = <&phy0>;
+	phy-mode = "rgmii-id";
+	mdio: mdio {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		phy0: ethernet-phy@15 {
+			#phy-cells = <1>;
+			compatible = "ethernet-phy-id2000.a231";
+			reg = <15>;
+			ti,rx-internal-delay = <0x8>;
+			ti,tx-internal-delay = <0xa>;
+			ti,fifo-depth = <0x1>;
+			ti,dp83867-rxctrl-strap-quirk;
+		};
+	};
+};
+
+&sdhci0 {
+  status = "okay";
+  no-1-8-v;
+};
+
+&psgtr {
+      /* dp 0-1, usb0, usb1 */
+      clocks = <&usb_clk>, <&dp_clk>;
+      clock-names = "ref0", "ref1";
+};
+
+&zynqmp_dpsub {
+  phys = <&psgtr 1 PHY_TYPE_DP 0 1>, <&psgtr 0 PHY_TYPE_DP 1 1>;
+};
+
+&usb0 {
+  status = "okay";
+  phys = <&psgtr 2 PHY_TYPE_USB3 0 1>;
+};
+
+&dwc3_0 {
+  status = "okay";
+  dr_mode = "peripheral";
+  snps,usb3_lpm_capable;
+  phy-names = "usb3-phy";
+  maximum-speed = "super-speed";
+};
+
+&usb1 {
+  status = "okay";
+  phys = <&psgtr 3 PHY_TYPE_USB3 1 1>;
+};
+
+&dwc3_1 {
+  status = "okay";
+  dr_mode = "host";
+  snps,usb3_lpm_capable;
+  phy-names = "usb3-phy";
+  maximum-speed = "super-speed";
+};
+
+&spi1 {
+  spidev@0 {
+    compatible = "rohm,dh2228fv";
+    reg = <0>;
+    spi-max-frequency = <500000>;
+  };
+};
+
+&uart1 {
+  status = "okay";
+};
