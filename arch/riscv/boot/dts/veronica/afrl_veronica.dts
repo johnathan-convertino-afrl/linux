@@ -7,6 +7,16 @@
 	model = "Veronica Nexys A7";
 	compatible = "Veronica, RV32IMAC";
 	
+  clocks {
+		axi_bus_aclk: clock@0 {
+			compatible = "fixed-clock";
+
+			clock-frequency = <50000000>;
+			clock-output-names = "s_axi_aclk";
+			#clock-cells = <0>;
+		};
+	};
+	
   aliases {
 		serial0 = &uart0;
 	};
@@ -18,18 +28,35 @@
 	memory@80000000 {
     status = "okay";
 		device_type = "memory";
-		reg = <0x0 0x80000000 0x0 0x8000000>;
+		reg = <0x80000000 0x8000000>;
 	};
+	
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		opensbi: sbi@80000000 {
+			reg = <0x80000000 0x00040000>;
+		};
+	};
+};
+
+&cpus {
+  clock-frequency = <50000000>;
+  timebase-frequency = <50000000>;
 };
 
 &soc {
   uart0: serial@44a10000 {
     status = "okay";
     compatible = "xlnx,xps-uartlite-1.00.a";
-    reg = <0x0 0x44a10000 0x0 0x10000>;
+    reg = <0x44a10000 0x10000>;
     interrupt-parent = <&plic0>;
     interrupts = <0 4 4>;
-    clock = <50000000>;
+    current-speed = <115200>;
+    clocks = <&axi_bus_aclk 0>;
+		clock-names = "s_axi_aclk";
   };
   
   gpio0: gpio@44a00000 {
@@ -51,7 +78,7 @@
   spi0: spi@44a20000 {
     status = "okay";
     compatible = "altr,spi-1.0";
-    reg = <0x0 0x44a20000 0x0 0x00010000>;
+    reg = <0x44a20000 0x00010000>;
     interrupt-parent = <&plic0>;
     interrupts = <0 5 4>;
     #address-cells = <0x1>;
@@ -62,9 +89,10 @@
       reg = <0>;
       status = "okay";
       voltage-ranges = <1800 3600>;
-      spi-max-frequency = <20000000>;
+      spi-max-frequency = <1000000>;
       disable-wp;
       disable-cd;
+      broken-cd;
     };
   };
 };

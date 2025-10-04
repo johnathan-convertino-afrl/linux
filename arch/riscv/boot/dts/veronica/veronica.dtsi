@@ -6,15 +6,13 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 
 / {
-	#address-cells = <2>;
-	#size-cells = <2>;
+	#address-cells = <1>;
+	#size-cells = <1>;
 	compatible = "veronica";
 
-	cpus {
+	cpus: cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
-		clock-frequency = <50000000>;
-		timebase-frequency = <50000000>;
 		
 		cpu0: cpu@0 {
 			compatible = "riscv";
@@ -24,10 +22,9 @@
 			mmu-type = "riscv,sv32";
 			riscv,isa = "rv32imac";
 			riscv,isa-base = "rv32i";
-			riscv,isa-extensions = "i", "m", "a", "c", "zicsr", "zifencei";
+			riscv,isa-extensions = "i", "m", "a", "c", "zicsr";
 			cpu0_intc: interrupt-controller {
 				#interrupt-cells = <1>;
-				#address-cells = <0>;
 				compatible = "riscv,cpu-intc";
 				interrupt-controller;
 			};
@@ -35,29 +32,26 @@
 	};
 	
 	soc: soc {
-		#address-cells = <2>;
-		#size-cells = <2>;
+		#address-cells = <1>;
+		#size-cells = <1>;
 		compatible = "simple-bus";
 		ranges;
 		
 		plic0: interrupt-controller@c000000 {
       status="okay";
-			compatible = "sifive,plic-1.0.0";
-			reg = <0x0 0xc000000 0x0 0x2100000>;
+			compatible = "sifive,plic-1.0.0", "sifive,fu540-c000-plic";
+			reg = <0xc000000 0x2100000>;
       #interrupt-cells = <1>;
-			#address-cells = <0>;
-			riscv,ndev = <53>;
+			riscv,ndev = <127>;
 			interrupt-controller;
-			interrupts-extended =
-				<&cpu0_intc 0xffffffff>;
+			interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
 		};
 		
 		clint0: clint@2000000 {
       status="okay";
-			#size-cells = <2>;
-			compatible = "sifive,clint0";
+			compatible = "riscv,clint0";
 			interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
-			reg = <0x00 0x2000000 0x00 0x10000>;
+			reg = <0x2000000 0x10000>;
 		};
 	};
 };
