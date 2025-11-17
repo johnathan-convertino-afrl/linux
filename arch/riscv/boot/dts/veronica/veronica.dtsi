@@ -25,6 +25,7 @@
 			riscv,isa-extensions = "i", "m", "a", "c", "zicsr";
 			cpu0_intc: interrupt-controller {
 				#interrupt-cells = <1>;
+				#address-cells = <1>;
 				compatible = "riscv,cpu-intc";
 				interrupt-controller;
 			};
@@ -38,6 +39,7 @@
 		ranges;
 		
 		plic0: interrupt-controller@c000000 {
+      #address-cells = <1>;
       status="okay";
 			compatible = "sifive,plic-1.0.0", "sifive,fu540-c000-plic";
 			reg = <0xc000000 0x2100000>;

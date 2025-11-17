@@ -8,12 +8,11 @@
 	compatible = "Veronica, RV32IMAC";
 	
   clocks {
-		axi_bus_aclk: clock@0 {
+		axi_bus_aclk: clock {
+      #clock-cells = <0>;
 			compatible = "fixed-clock";
-
 			clock-frequency = <50000000>;
 			clock-output-names = "s_axi_aclk";
-			#clock-cells = <0>;
 		};
 	};
 	
@@ -50,13 +49,19 @@
 &soc {
   uart0: serial@44a10000 {
     status = "okay";
-    compatible = "xlnx,xps-uartlite-1.00.a";
+    compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
     reg = <0x44a10000 0x10000>;
     interrupt-parent = <&plic0>;
-    interrupts = <0 4 4>;
+    interrupts = <4 0>;
     current-speed = <115200>;
     clocks = <&axi_bus_aclk 0>;
 		clock-names = "s_axi_aclk";
+    port-number = <0>;
+    xlnx,baudrate = <0x1c200>;
+    xlnx,data-bits = <0x8>;
+    xlnx,odd-parity = <0x0>;
+    xlnx,s-axi-aclk-freq-hz-d = "50.0";
+    xlnx,use-parity = <0x0>;
   };
   
   gpio0: gpio@44a00000 {
@@ -65,8 +70,8 @@
     compatible = "xlnx,xps-gpio-1.00.a";
     gpio-controller ;
     interrupt-parent = <&plic0>;
-    interrupts = <0 6 4>;
-    reg = <0x0 0x44a00000 0x0 0x10000 >;
+    interrupts = <6 2>;
+    reg = <0x44a00000 0x10000>;
     xlnx,all-inputs = <0x0>;
     xlnx,dout-default = <0x0>;
     xlnx,gpio-width = <0x2>;
@@ -80,9 +85,12 @@
     compatible = "altr,spi-1.0";
     reg = <0x44a20000 0x00010000>;
     interrupt-parent = <&plic0>;
-    interrupts = <0 5 4>;
+    interrupts = <5>;
     #address-cells = <0x1>;
     #size-cells = <0x0>;
+    clocks = <&axi_bus_aclk 0>;
+		clock-names = "s_axi_aclk";
+    num-chipselect = <1>;
 
     mmc_spi0: mmc-slot@0 {
       compatible = "mmc-spi-slot";
@@ -92,7 +100,6 @@
       spi-max-frequency = <1000000>;
       disable-wp;
       disable-cd;
-      broken-cd;
     };
   };
 };
