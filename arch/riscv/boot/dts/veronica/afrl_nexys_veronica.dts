@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0 OR MIT)
 
-#include "veronica.dtsi"
 #include "veronica_basedev.dtsi"
-#include "veronica.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 
 / {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: (GPL-2.0 OR MIT)
 
-/dts-v1/;
+#include "veronica.dtsi"
+#include <dt-bindings/gpio/gpio.h>
 
 &soc {
   uart0: serial@44a10000 {
