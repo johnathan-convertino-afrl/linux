@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+
+#include "veronica.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	model = "Veronica kc705";
+	compatible = "Veronica, RV32IMAC";
+	
+  clocks {
+		axi_bus_aclk: clock {
+      #clock-cells = <0>;
+			compatible = "fixed-clock";
+			clock-frequency = <50000000>;
+			clock-output-names = "s_axi_aclk";
+		};
+	};
+	
+  aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0";
+	};
+
+	memory@80000000 {
+    status = "okay";
+		device_type = "memory";
+		reg = <0x80000000 0x40000000>;
+	};
+	
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		opensbi: sbi@80000000 {
+			reg = <0x80000000 0x00040000>;
+		};
+	};
+};
+
+&cpus {
+  clock-frequency = <50000000>;
+  timebase-frequency = <50000000>;
+};
+
+&soc {
+  uart0: serial@44a10000 {
+    status = "okay";
+    compatible = "xlnx,xps-uartlite-1.00.a";
+    reg = <0x44a10000 0x10000>;
+    interrupt-parent = <&plic0>;
+    interrupts = <4>;
+    current-speed = <115200>;
+    clocks = <&axi_bus_aclk 0>;
+		clock-names = "s_axi_aclk";
+  };
+  
+  gpio0: gpio@44a00000 {
+    status = "okay";
+    #gpio-cells = <2>;
+    compatible = "xlnx,xps-gpio-1.00.a";
+    gpio-controller ;
+    interrupt-parent = <&plic0>;
+    interrupts = <6>;
+    reg = <0x44a00000 0x10000>;
+    xlnx,all-inputs = <0x0>;
+    xlnx,dout-default = <0x0>;
+    xlnx,gpio-width = <0x2>;
+    xlnx,interrupt-present = <0x1>;
+    xlnx,is-dual = <0x0>;
+    xlnx,tri-default = <0xffffffff>;
+  };
+
+  spi0: spi@44a20000 {
+    status = "okay";
+    compatible = "altr,spi-1.0";
+    reg = <0x44a20000 0x00010000>;
+    interrupt-parent = <&plic0>;
+    interrupts = <5>;
+    #address-cells = <0x1>;
+    #size-cells = <0x0>;
+    clocks = <&axi_bus_aclk 0>;
+		clock-names = "s_axi_aclk";
+    num-chipselect = <1>;
+
+    mmc_spi0: mmc-slot@0 {
+      compatible = "mmc-spi-slot";
+      reg = <0>;
+      status = "okay";
+      voltage-ranges = <1800 3600>;
+      spi-max-frequency = <1000000>;
+      disable-wp;
+      disable-cd;
+    };
+  };
+};

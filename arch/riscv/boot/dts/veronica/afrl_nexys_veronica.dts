@@ -49,19 +49,13 @@
 &soc {
   uart0: serial@44a10000 {
     status = "okay";
-    compatible = "xlnx,axi-uartlite-2.0", "xlnx,xps-uartlite-1.00.a";
+    compatible = "xlnx,xps-uartlite-1.00.a";
     reg = <0x44a10000 0x10000>;
     interrupt-parent = <&plic0>;
-    interrupts = <4 0>;
+    interrupts = <4>;
     current-speed = <115200>;
     clocks = <&axi_bus_aclk 0>;
 		clock-names = "s_axi_aclk";
-    port-number = <0>;
-    xlnx,baudrate = <0x1c200>;
-    xlnx,data-bits = <0x8>;
-    xlnx,odd-parity = <0x0>;
-    xlnx,s-axi-aclk-freq-hz-d = "50.0";
-    xlnx,use-parity = <0x0>;
   };
   
   gpio0: gpio@44a00000 {
@@ -70,7 +64,7 @@
     compatible = "xlnx,xps-gpio-1.00.a";
     gpio-controller ;
     interrupt-parent = <&plic0>;
-    interrupts = <6 2>;
+    interrupts = <6>;
     reg = <0x44a00000 0x10000>;
     xlnx,all-inputs = <0x0>;
     xlnx,dout-default = <0x0>;
