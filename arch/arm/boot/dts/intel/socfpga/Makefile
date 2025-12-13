@@ -21,3 +21,5 @@ dtb-$(CONFIG_ARCH_INTEL_SOCFPGA) += \
 	socfpga_arria10_hanpilot_sdmmc.dtb \
 	socfpga_arria10_socdk_fmcomms2-3.dtb \
 	socfpga_arria10_socdk_fmcomms5.dtb \
+	socfpga_cyclone5_tei0022_fmcomms2-3.dtb \
+	socfpga_cyclone5_tei0022.dtb \
