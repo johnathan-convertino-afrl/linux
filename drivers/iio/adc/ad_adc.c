@@ -362,7 +362,7 @@ static int axiadc_update_scan_mode(struct iio_dev *indio_dev,
 	struct axiadc_state *st = iio_priv(indio_dev);
 	unsigned int i, ctrl;
 
-	for (i = 0; i < indio_dev->masklength; i++) {
+	for (i = 0; i < iio_get_masklength(indio_dev); i++) {
 		ctrl = axiadc_read(st, ADI_REG_CHAN_CNTRL(i));
 
 		if (test_bit(i, scan_mask))
@@ -626,6 +626,8 @@ static const struct of_device_id adc_of_match[] = {
 	{ .compatible = "adi,axi-adrv9009-obs-1.0",
 				.data = &obs_rx_chip_info },
 	{ .compatible = "adi,axi-adrv9009-obs-single-1.0",
+				.data = &obs_rx_chip_info },
+	{ .compatible = "adi,axi-adrv9025-obs-1.0",
 				.data = &obs_rx_chip_info },
 	{ .compatible = "adi,axi-adrv9002-rx2-1.0",
 				.data = &adrv9002_rx_chip_info },

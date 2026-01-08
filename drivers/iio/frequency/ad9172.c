@@ -67,6 +67,7 @@ struct ad9172_state {
 	u32 clock_output_config;
 	u32 scrambling;
 	u32 sysref_mode;
+	u32 sysref_err_win;
 	bool pll_bypass;
 	signal_type_t syncoutb_type;
 	signal_coupling_t sysref_coupling;
@@ -180,6 +181,11 @@ static int ad9172_finalize_setup(struct ad9172_state *st)
 		return -EIO;
 
 	return regmap_write(st->map, 0x596, 0x1c);
+}
+
+static void ad9172_clk_disable(void *clk)
+{
+	clk_disable_unprepare(clk);
 }
 
 static int ad9172_setup(struct ad9172_state *st)
@@ -353,9 +359,9 @@ static int ad9172_setup(struct ad9172_state *st)
 		return ret;
 	}
 
-	devm_add_action_or_reset(dev,
-				 (void(*)(void *))clk_disable_unprepare,
-				 st->conv.clk[CLK_DATA]);
+	ret = devm_add_action_or_reset(dev, ad9172_clk_disable, st->conv.clk[CLK_DATA]);
+	if (ret)
+		return ret;
 
 	ad917x_jesd_set_sysref_enable(ad917x_h, !!st->jesd_subclass);
 
@@ -398,9 +404,9 @@ static int ad9172_get_clks(struct cf_axi_converter *conv)
 			if (ret < 0)
 				return ret;
 
-			devm_add_action_or_reset(&conv->spi->dev,
-					(void(*)(void *))clk_disable_unprepare,
-					clk);
+			ret = devm_add_action_or_reset(&conv->spi->dev, ad9172_clk_disable, clk);
+			if (ret)
+				return ret;
 		}
 
 		of_clk_get_scale(conv->spi->dev.of_node,
@@ -928,6 +934,9 @@ static int ad9172_parse_dt(struct spi_device *spi, struct ad9172_state *st)
 	if (of_property_read_u32(np, "adi,sysref-mode", &st->sysref_mode))
 		st->sysref_mode = SYSREF_CONT;
 
+	st->sysref_err_win = 0;
+	of_property_read_u32(np, "adi,sysref-error-window", &st->sysref_err_win);
+
 	/*Logic lane configuration*/
 	ret = of_property_read_u8_array(np,"adi,logic-lanes-mapping",
 				      st->logic_lanes, sizeof(st->logic_lanes));
@@ -1001,6 +1010,15 @@ static int ad9172_jesd204_link_enable(struct jesd204_dev *jdev,
 
 	ad917x_jesd_set_sysref_enable(&st->dac_h, !!st->jesd_subclass);
 
+	if (lnk->subclass == JESD204_SUBCLASS_1 &&
+	    st->sysref_mode == SYSREF_ONESHOT) {
+		ret = ad917x_jesd_oneshot_sync(&st->dac_h, st->sysref_err_win);
+		if (ret) {
+			dev_err(dev, "Failed to set oneshot sync (%d)\n", ret);
+			return ret;
+		}
+	}
+
 	/*Enable Link*/
 	ret = ad917x_jesd_enable_link(&st->dac_h, JESD_LINK_ALL,
 		reason == JESD204_STATE_OP_REASON_INIT);
@@ -1021,6 +1039,7 @@ static int ad9172_jesd204_link_running(struct jesd204_dev *jdev,
 	struct ad9172_state *st = priv->st;
 	unsigned long lane_rate_khz;
 	int ret;
+	bool done;
 
 	if (reason != JESD204_STATE_OP_REASON_INIT)
 		return JESD204_STATE_CHANGE_DONE;
@@ -1038,6 +1057,20 @@ static int ad9172_jesd204_link_running(struct jesd204_dev *jdev,
 	if (ret) {
 		dev_err(dev, "Failed JESD204 link status (%d)\n", ret);
 		return ret;
+	}
+
+	if (lnk->subclass == JESD204_SUBCLASS_1 &&
+	    st->sysref_mode == SYSREF_ONESHOT) {
+		ret = ad917x_jesd_get_sync_rotation_done(&st->dac_h, &done);
+		if (ret) {
+			dev_err(dev, "Failed sync rotation read (%d)\n", ret);
+			return ret;
+		}
+
+		if (!done) {
+			dev_err(dev, "JESD204 sync rotation check failed\n");
+			return JESD204_STATE_CHANGE_ERROR;
+		}
 	}
 
 	return JESD204_STATE_CHANGE_DONE;

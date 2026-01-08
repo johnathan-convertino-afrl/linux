@@ -20,77 +20,6 @@ pool:
 stages:
   - stage: Build
     jobs:
-    - job: sync_branches_with_main
-      condition: and(ne(variables['Build.Reason'], 'PullRequest'), eq(variables.isMain, true))
-      variables:
-        BUILD_TYPE: sync_branches_with_main
-        MAIN_BRANCH: $[ variables['Build.SourceBranchName'] ]
-        CI: true
-      steps:
-      - checkout: self
-        fetchDepth: 50
-        clean: true
-        persistCredentials: true
-      - script: ./ci/travis/run-build.sh
-        displayName: 'Sync Branches With Main Branch'
-
-    - job: checkpatch
-      condition: eq(variables['Build.Reason'], 'PullRequest')
-      variables:
-        BUILD_TYPE: checkpatch
-        TARGET_BRANCH: $[ variables['System.PullRequest.TargetBranch'] ]
-        COMMIT: $[ variables['Build.SourceVersion'] ]
-        REPO_URL: $[ variables['Build.Repository.Uri'] ]
-      steps:
-      - checkout: none
-      - script: |
-          set -ex
-          git init
-          git remote add origin ${REPO_URL}
-          git fetch --filter=tree:0 --no-tags origin ${COMMIT}
-          git checkout --progress --force ${COMMIT}
-          ./ci/travis/run-build.sh
-        displayName: 'Checkpatch Script'
-
-    - job: dt_binding_check
-      condition: eq(variables['Build.Reason'], 'PullRequest')
-      variables:
-        BUILD_TYPE: dt_binding_check
-        TARGET_BRANCH: $[ variables['System.PullRequest.TargetBranch'] ]
-        COMMIT: $[ variables['Build.SourceVersion'] ]
-        REPO_URL: $[ variables['Build.Repository.Uri'] ]
-        UPSTREAM_REPO_URL: https://git.kernel.org/pub/scm/linux/kernel/git/robh/linux.git
-        UPSTREAM_REPO_BRANCH: dt/next
-      steps:
-      - checkout: none
-      - script: |
-          set -ex
-
-          git init
-          git remote add origin ${REPO_URL}
-          git fetch  --progress --filter=tree:0 --no-tags origin ${COMMIT}
-
-          git remote add upstream ${UPSTREAM_REPO_URL}
-          git fetch --progress --depth=1 upstream ${UPSTREAM_REPO_BRANCH}
-          git checkout --progress --force FETCH_HEAD
-
-          git checkout ${COMMIT} -- ci/travis/
-
-          ./ci/travis/run-build.sh
-        displayName: 'Bindings Check Script'
-
-    - job: check_new_file_license
-      condition: eq(variables['Build.Reason'], 'PullRequest')
-      variables:
-        BUILD_TYPE: check_new_file_license
-        TARGET_BRANCH: $[ variables['System.PullRequest.TargetBranch'] ]
-      steps:
-      - checkout: self
-        fetchDepth: 50
-        clean: true
-      - script: ./ci/travis/run-build.sh
-        displayName: 'Check Is New ADI Driver & Dual Licensed'
-
     - job: microblaze_build_test
       variables:
         BUILD_TYPE: microblaze
@@ -137,8 +66,13 @@ stages:
         displayName: 'Device-Tree Build Test'
       - task: CopyFiles@2
         inputs:
-          sourceFolder: '$(Agent.BuildDirectory)/s/arch/arm/boot/dts'
-          contents: '$(Agent.BuildDirectory)/s/arch/arm/boot/dts/?(*.dtb)'
+          sourceFolder: '$(Agent.BuildDirectory)/s/arch/arm/boot/dts/intel/socfpga'
+          contents: '$(Agent.BuildDirectory)/s/arch/arm/boot/dts/intel/socfpga/?(*.dtb)'
+          targetFolder: '$(Build.ArtifactStagingDirectory)'
+      - task: CopyFiles@2
+        inputs:
+          sourceFolder: '$(Agent.BuildDirectory)/s/arch/arm/boot/dts/xilinx'
+          contents: '$(Agent.BuildDirectory)/s/arch/arm/boot/dts/xilinx/?(*.dtb)'
           targetFolder: '$(Build.ArtifactStagingDirectory)'
       - task: CopyFiles@2
         inputs:
@@ -216,6 +150,7 @@ stages:
       condition: or(
           and(
             startsWith(variables['Build.SourceBranch'], 'refs/pull/'),
+            ne(variables['SYSTEM.PULLREQUEST.ISFORK'], 'true'),
             or(
               eq(variables['System.PullRequest.TargetBranch'], 'main'),
               eq(variables['System.PullRequest.TargetBranch'], 'next_stable'),

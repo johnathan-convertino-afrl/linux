@@ -166,6 +166,13 @@
 	 ADRV9002_GP_MASK_TX_DP_TRANSMIT_ERROR |		\
 	 ADRV9002_GP_MASK_RX_DP_RECEIVE_ERROR)
 
+/*
+ * For frequency hopping enabled profiles, do not include the PLL lock interrupt as these will
+ * cause excessive IRQs due to the constant PLL retuning
+ */
+#define ADRV9002_IRQ_MASK_FFH	\
+	(ADRV9002_IRQ_MASK & ~(ADRV9002_GP_MASK_RF_SYNTH_LOCK | ADRV9002_GP_MASK_RF2_SYNTH_LOCK))
+
 #define ADRV9002_RX_BIT_START		(ffs(ADI_ADRV9001_RX1) - 1)
 #define ADRV9002_TX_BIT_START		(ffs(ADI_ADRV9001_TX1) - 1)
 #define ADRV9002_ORX_BIT_START		(ffs(ADI_ADRV9001_ORX1) - 1)
@@ -2988,10 +2995,7 @@ static void adrv9002_compute_init_cals(struct adrv9002_rf_phy *phy)
 		if (!c->enabled)
 			continue;
 
-		if (c->port == ADI_RX)
-			pos |= ADRV9002_PORT_MASK(c);
-		else
-			pos |= ADRV9002_PORT_MASK(c);
+		pos |= ADRV9002_PORT_MASK(c);
 	}
 
 	phy->init_cals.chanInitCalMask[0] = adrv9002_init_cals_mask[pos][0];
@@ -3452,10 +3456,9 @@ static int adrv9002_digital_init(const struct adrv9002_rf_phy *phy)
 	return api_call(phy, adi_adrv9001_arm_StartStatus_Check, 5000000);
 }
 
-static u64 adrv9002_get_init_carrier(const struct adrv9002_chan *c)
+static int adrv9002_get_init_carrier(const struct adrv9002_chan *c, u64 *carrier)
 {
 	const struct adrv9002_rf_phy *phy = chan_to_phy(c);
-	u64 lo_freq;
 
 	if (!c->ext_lo) {
 		/* If no external LO, keep the same values as before */
@@ -3465,37 +3468,36 @@ static u64 adrv9002_get_init_carrier(const struct adrv9002_chan *c)
 			 * mode, the carrier needs to be in the given range.
 			 */
 			if (c->carrier)
-				lo_freq = c->carrier;
+				*carrier = c->carrier;
 			else
-				lo_freq = 2400000000ULL;
+				*carrier = 2400000000ULL;
 
 			if (!phy->port_switch.enable || phy->port_switch.manualRxPortSwitch)
-				return lo_freq;
+				return 0;
 
-			if (ADRV9002_PORT_SWITCH_IN_RANGE(&phy->port_switch, lo_freq))
-				return lo_freq;
+			if (ADRV9002_PORT_SWITCH_IN_RANGE(&phy->port_switch, *carrier))
+				return 0;
 
 			dev_dbg(&phy->spi->dev, "RX%u LO(%llu) not in allowed range, Using(%llu)\n",
-				c->number, lo_freq, phy->port_switch.maxFreqPortA_Hz);
+				c->number, *carrier, phy->port_switch.maxFreqPortA_Hz);
 			/* just choose one valid value */
-			return phy->port_switch.maxFreqPortA_Hz;
+			*carrier = phy->port_switch.maxFreqPortA_Hz;
+			return 0;
 		}
 
-		if (c->carrier)
-			return c->carrier;
-
-		return 2450000000ULL;
+		*carrier = c->carrier ?: 2450000000ULL;
+		return 0;
 	}
 
-	lo_freq = DIV_ROUND_CLOSEST_ULL(clk_get_rate_scaled(c->ext_lo->clk, &c->ext_lo->scale),
-					c->ext_lo->divider);
+	*carrier = DIV_ROUND_CLOSEST_ULL(clk_get_rate_scaled(c->ext_lo->clk, &c->ext_lo->scale),
+					 c->ext_lo->divider);
 	/* if we have an external LO which does not fit in the port switch ranges just error out */
 	if (!phy->port_switch.enable || phy->port_switch.manualRxPortSwitch ||
-	    ADRV9002_PORT_SWITCH_IN_RANGE(&phy->port_switch, lo_freq))
-		return lo_freq;
+	    ADRV9002_PORT_SWITCH_IN_RANGE(&phy->port_switch, *carrier))
+		return 0;
 
 	dev_err(&phy->spi->dev, "Port Switch enabled and RX%u LO(%llu) not in allowed range\n",
-		c->number, lo_freq);
+		c->number, *carrier);
 
 	return -EINVAL;
 }
@@ -3543,34 +3545,47 @@ static int adrv9002_radio_init(struct adrv9002_rf_phy *phy)
 	int chan;
 	u8 channel_mask = (phy->curr_profile->tx.txInitChannelMask |
 			   phy->curr_profile->rx.rxInitChannelMask) & 0xFF;
-	struct adi_adrv9001_PllLoopFilterCfg pll_loop_filter = {
-		.effectiveLoopBandwidth_kHz = 0,
-		.loopBandwidth_kHz = 300,
-		.phaseMargin_degrees = 60,
-		.powerScale = 5
-	};
 	struct adi_adrv9001_Carrier carrier = {0};
 
 	ret = api_call(phy, adi_adrv9001_Radio_PllLoopFilter_Set,
-		       ADI_ADRV9001_PLL_LO1, &pll_loop_filter);
+		       ADI_ADRV9001_PLL_LO1,
+		       &phy->pll_configs[ADI_ADRV9001_PLL_LO1].pll_loop_filter);
+	if (ret)
+		return ret;
+
+	ret = api_call(phy, adi_adrv9001_Radio_Pll_Configure,
+		       ADI_ADRV9001_PLL_LO1,
+		       &phy->pll_configs[ADI_ADRV9001_PLL_LO1].pll_config);
 	if (ret)
 		return ret;
 
 	ret = api_call(phy, adi_adrv9001_Radio_PllLoopFilter_Set,
-		       ADI_ADRV9001_PLL_LO2, &pll_loop_filter);
+		       ADI_ADRV9001_PLL_LO2,
+		       &phy->pll_configs[ADI_ADRV9001_PLL_LO2].pll_loop_filter);
 	if (ret)
 		return ret;
 
+	ret = api_call(phy, adi_adrv9001_Radio_Pll_Configure,
+		       ADI_ADRV9001_PLL_LO2,
+		       &phy->pll_configs[ADI_ADRV9001_PLL_LO2].pll_config);
+	if (ret)
+		return ret;
+
+	/* Aux PLL does not have a adi_adrv9001_Radio_Pll_Configure call in SDK */
 	ret = api_call(phy, adi_adrv9001_Radio_PllLoopFilter_Set,
-		       ADI_ADRV9001_PLL_AUX, &pll_loop_filter);
+		       ADI_ADRV9001_PLL_AUX,
+		       &phy->pll_configs[ADI_ADRV9001_PLL_AUX].pll_loop_filter);
 	if (ret)
 		return ret;
 
-	if (phy->port_switch.enable) {
-		ret = api_call(phy, adi_adrv9001_Rx_PortSwitch_Configure, &phy->port_switch);
-		if (ret)
-			return ret;
-	}
+	/*
+	 * This needs to be done otherwise selecting port B on RX2 and port A on RX1 would
+	 * not properly work. Likely a bug in the device FW but for now, let`s just
+	 * workaround it here.
+	 */
+	ret = api_call(phy, adi_adrv9001_Rx_PortSwitch_Configure, &phy->port_switch);
+	if (ret)
+		return ret;
 
 	for (chan = 0; chan < ARRAY_SIZE(phy->channels); chan++) {
 		struct adrv9002_chan *c = phy->channels[chan];
@@ -3595,7 +3610,10 @@ static int adrv9002_radio_init(struct adrv9002_rf_phy *phy)
 		if (ret)
 			return ret;
 
-		carrier.carrierFrequency_Hz = adrv9002_get_init_carrier(c);
+		ret = adrv9002_get_init_carrier(c, &carrier.carrierFrequency_Hz);
+		if (ret)
+			return ret;
+
 		ret = api_call(phy, adi_adrv9001_Radio_Carrier_Configure,
 			       c->port, c->number, &carrier);
 		if (ret)
@@ -3698,7 +3716,10 @@ static int adrv9002_setup(struct adrv9002_rf_phy *phy)
 		return ret;
 
 	/* unmask IRQs */
-	ret = api_call(phy, adi_adrv9001_gpio_GpIntMask_Set, ~ADRV9002_IRQ_MASK);
+	if (phy->curr_profile->sysConfig.fhModeOn)
+		ret = api_call(phy, adi_adrv9001_gpio_GpIntMask_Set, ~ADRV9002_IRQ_MASK_FFH);
+	else
+		ret = api_call(phy, adi_adrv9001_gpio_GpIntMask_Set, ~ADRV9002_IRQ_MASK);
 	if (ret)
 		return ret;
 
@@ -4275,7 +4296,7 @@ static ssize_t adrv9002_fh_bin_table_write(struct adrv9002_rf_phy *phy, char *bu
 		return -ENOMEM;
 
 	memcpy(tbl->bin_table, buf, count);
-	/* The bellow is always safe as @bin_table is bigger (by 1 byte) than the bin attribute */
+	/* The below is always safe as @bin_table is bigger (by 1 byte) than the bin attribute */
 	tbl->bin_table[count] = '\0';
 
 	max_sz = ARRAY_SIZE(tbl->hop_tbl);
@@ -4301,7 +4322,7 @@ static ssize_t adrv9002_fh_bin_table_write(struct adrv9002_rf_phy *phy, char *bu
 			return -EINVAL;
 		}
 
-		if (entry > max_sz) {
+		if (entry >= max_sz) {
 			dev_err(&phy->spi->dev, "Hop:%d table:%d too big:%d\n", hop, table, entry);
 			return -EINVAL;
 		}
@@ -4315,10 +4336,10 @@ static ssize_t adrv9002_fh_bin_table_write(struct adrv9002_rf_phy *phy, char *bu
 
 		tbl->hop_tbl[entry].hopFrequencyHz = lo;
 		tbl->hop_tbl[entry].rx1OffsetFrequencyHz = rx10_if;
-		tbl->hop_tbl[entry].rx2OffsetFrequencyHz = rx10_if;
+		tbl->hop_tbl[entry].rx2OffsetFrequencyHz = rx20_if;
 		tbl->hop_tbl[entry].rx1GainIndex = rx1_gain;
 		tbl->hop_tbl[entry].tx1Attenuation_fifthdB = tx1_atten;
-		tbl->hop_tbl[entry].rx2GainIndex = rx1_gain;
+		tbl->hop_tbl[entry].rx2GainIndex = rx2_gain;
 		tbl->hop_tbl[entry].tx2Attenuation_fifthdB = tx2_atten;
 		entry++;
 	}
@@ -4643,31 +4664,19 @@ static ssize_t adrv9002_init_cals_bin_read(struct file *filp, struct kobject *ko
 static int adrv9002_profile_load(struct adrv9002_rf_phy *phy)
 {
 	int ret;
-	const struct firmware *fw;
 	const char *profile;
-	void *buf;
 
 	if (phy->ssi_type == ADI_ADRV9001_SSI_TYPE_CMOS)
 		profile = phy->chip->cmos_profile;
 	else
 		profile = phy->chip->lvd_profile;
 
+	const struct firmware *fw __free(firmware) = NULL;
 	ret = request_firmware(&fw, profile, &phy->spi->dev);
 	if (ret)
 		return ret;
 
-	buf = kzalloc(fw->size, GFP_KERNEL);
-	if (!buf) {
-		release_firmware(fw);
-		return -ENOMEM;
-	}
-
-	memcpy(buf, fw->data, fw->size);
-	ret = api_call(phy, adi_adrv9001_profileutil_Parse, &phy->profile, buf, fw->size);
-	release_firmware(fw);
-	kfree(buf);
-
-	return ret;
+	return api_call(phy, adi_adrv9001_profileutil_Parse, &phy->profile, fw->data, fw->size);
 }
 
 static int adrv9002_init_cals_coeffs_name_get(struct adrv9002_rf_phy *phy)
@@ -4828,6 +4837,37 @@ static void adrv9002_free_coeffs(void *dev)
 	struct adrv9002_rf_phy *phy = dev;
 
 	kfree(phy->warm_boot.cals);
+}
+
+struct adrv9002_bin_attr_drop {
+	const struct bin_attribute *attr;
+	struct device *dev;
+};
+
+static void adrv9002_remove_bin_file(void *data)
+{
+	struct adrv9002_bin_attr_drop *drop = data;
+
+	device_remove_bin_file(drop->dev, drop->attr);
+}
+
+static int adrv9002_bin_attr_add(struct device *dev, const struct bin_attribute *attr)
+{
+	struct adrv9002_bin_attr_drop *drop;
+	int ret;
+
+	drop = devm_kzalloc(dev, sizeof(*drop), GFP_KERNEL);
+	if (!drop)
+		return -ENOMEM;
+
+	drop->attr = attr;
+	drop->dev = dev;
+
+	ret = device_create_bin_file(dev, attr);
+	if (ret)
+		return ret;
+
+	return devm_add_action_or_reset(dev, adrv9002_remove_bin_file, drop);
 }
 
 static const char * const clk_names[NUM_ADRV9002_CLKS] = {
@@ -4995,7 +5035,7 @@ tx_clk_register:
 	if (!phy->bin_attr_buf)
 		return -ENOMEM;
 
-	ret = device_create_bin_file(&indio_dev->dev, &bin_attr_profile_config);
+	ret = adrv9002_bin_attr_add(&indio_dev->dev, &bin_attr_profile_config);
 	if (ret < 0)
 		return ret;
 
@@ -5003,12 +5043,12 @@ tx_clk_register:
 	if (!phy->stream_buf)
 		return -ENOMEM;
 
-	ret = device_create_bin_file(&indio_dev->dev, &bin_attr_stream_config);
+	ret = adrv9002_bin_attr_add(&indio_dev->dev, &bin_attr_stream_config);
 	if (ret < 0)
 		return ret;
 
 	for (c = 0; c < ARRAY_SIZE(hop_attrs); c++) {
-		ret = device_create_bin_file(&indio_dev->dev, hop_attrs[c]);
+		ret = adrv9002_bin_attr_add(&indio_dev->dev, hop_attrs[c]);
 		if (ret < 0)
 			return ret;
 	}
@@ -5018,18 +5058,18 @@ tx_clk_register:
 		if (!phy->tx_channels[c].dpd_init)
 			continue;
 
-		ret = device_create_bin_file(&indio_dev->dev, dpd_fh_regions[c]);
+		ret = adrv9002_bin_attr_add(&indio_dev->dev, dpd_fh_regions[c]);
 		if (ret)
 			return ret;
 
 		for (r = 0; r < ADRV9002_DPD_MAX_REGIONS; r++) {
-			ret = device_create_bin_file(&indio_dev->dev, dpd_coeffs[c][r]);
+			ret = adrv9002_bin_attr_add(&indio_dev->dev, dpd_coeffs[c][r]);
 			if (ret)
 				return ret;
 		}
 	}
 
-	ret = device_create_bin_file(&indio_dev->dev, &bin_attr_warmboot_coefficients);
+	ret = adrv9002_bin_attr_add(&indio_dev->dev, &bin_attr_warmboot_coefficients);
 	if (ret)
 		return ret;
 

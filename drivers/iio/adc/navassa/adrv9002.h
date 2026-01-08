@@ -45,6 +45,7 @@ struct iio_chan_spec;
 	(ADI_ADRV9001_WB_MAX_NUM_UNIQUE_CALS * ADI_ADRV9001_WB_MAX_NUM_COEFF)
 #define ADRV9002_RX1_REF_CLK		1
 #define ADRV9002_RX2_REF_CLK		2
+#define ADRV9002_NUM_PLL_CFGS		3
 
 enum {
 	ADRV9002_CHANN_1,
@@ -216,12 +217,18 @@ struct adrv9002_tx_chan {
 #ifdef CONFIG_DEBUG_FS
 	struct adi_adrv9001_TxSsiTestModeCfg ssi_test;
 	u8 loopback;
+	u8 datapath_loopback;
 #endif
 };
 
 struct adrv9002_gpio {
 	struct adi_adrv9001_GpioCfg gpio;
 	u32 signal;
+};
+
+struct adrv9002_pll_config {
+	struct adi_adrv9001_PllLoopFilterCfg pll_loop_filter;
+	struct adi_adrv9001_PllConfig pll_config;
 };
 
 #define to_clk_priv(_hw) container_of(_hw, struct adrv9002_clock, hw)
@@ -289,6 +296,7 @@ struct adrv9002_rf_phy {
 	struct adi_adrv9001_Init	profile;
 	struct adi_adrv9001_InitCals	init_cals;
 	struct adi_adrv9001_RxPortSwitchCfg port_switch;
+	struct adrv9002_pll_config	pll_configs[ADRV9002_NUM_PLL_CFGS];
 	bool				run_cals;
 	u32				n_clks;
 	u32				dev_clkout_div;
