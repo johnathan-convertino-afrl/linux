@@ -1637,7 +1637,7 @@ config FB_PS3_DEFAULT_SIZE_M
 
 config FB_XILINX
 	tristate "Xilinx frame buffer support"
-	depends on FB && (MICROBLAZE || ARCH_ZYNQ || ARCH_ZYNQMP)
+	depends on FB
 	select FB_IOMEM_HELPERS
 	help
 	  Include support for the Xilinx ML300/ML403 reference design
