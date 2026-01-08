@@ -17,6 +17,7 @@
 	};
 	
   aliases {
+		ethernet0 = &axi_ethernet;
 		serial0 = &uart0;
 	};
 
@@ -38,10 +39,45 @@
 		opensbi: sbi@80000000 {
 			reg = <0x80000000 0x00040000>;
 		};
+		
+		framebuffer: vga@87000000 {
+			reg = <0x87000000 0x400000>;
+		};
 	};
 };
 
 &cpus {
   clock-frequency = <50000000>;
   timebase-frequency = <50000000>;
+};
+
+&soc {
+	axi_ethernet: ethernet@74A00000 {
+		compatible = "xlnx,axi-ethernetlite-3.0", "xlnx,xps-ethernetlite-1.00.a";
+		device_type = "network";
+		interrupt-parent = <&plic0>;
+		interrupts = <1 0>;
+		local-mac-address = [00 0a 35 00 00 02];
+		phy-handle = <&phy0>;
+		reg = <0x74A00000 0x2000>;
+		xlnx,rx-ping-pong = <0x0>;
+		xlnx,tx-ping-pong = <0x0>;
+		axi_ethernet_mdio: mdio {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			phy0: phy@1 {
+				device_type = "ethernet-phy";
+				smsc,disable-energy-detect;
+				reg = <0x1>;
+			};
+		};
+	};
+	
+	//axi_vga_fb: axi_vga_fb@74A10000 {
+	//	compatible = "xlkn,xps-tft-2.00.a";
+	//	interrupt-parent = <&plic0>;
+	//	interrupts = <2>;
+	//	reg = <0x74A10000 0x10000>;
+	//	xlnx,dcr-splb-slave-if = <0x1>;
+	//};
 };
