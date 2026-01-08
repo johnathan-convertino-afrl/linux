@@ -74,7 +74,7 @@
 	};
 	
 	axi_vga_fb: axi_vga_fb@74A10000 {
-		compatible = "xlkn,xps-tft-2.00.a";
+		compatible = "xlnx,xps-tft-2.00.a";
 		interrupt-parent = <&plic0>;
 		interrupts = <2>;
 		reg = <0x74A10000 0x10000>;
