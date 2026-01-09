@@ -78,6 +78,6 @@
 		interrupt-parent = <&plic0>;
 		interrupts = <2>;
 		reg = <0x74A10000 0x10000>;
-		xlnx,dcr-splb-slave-if = <0x1>;
+		xlnx,dcr-splb-slave-if = <0x0>;
 	};
 };
