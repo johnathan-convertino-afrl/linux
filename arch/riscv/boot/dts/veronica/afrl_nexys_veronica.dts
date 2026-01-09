@@ -60,8 +60,8 @@
 		local-mac-address = [00 0a 35 00 00 02];
 		phy-handle = <&phy0>;
 		reg = <0x74A00000 0x2000>;
-		xlnx,rx-ping-pong = <0x0>;
-		xlnx,tx-ping-pong = <0x0>;
+		xlnx,rx-ping-pong = <0x1>;
+		xlnx,tx-ping-pong = <0x1>;
 		axi_ethernet_mdio: mdio {
 			#address-cells = <1>;
 			#size-cells = <0>;
