@@ -16,7 +16,7 @@
 		};
 	};
 	
-  aliases {
+	aliases {
 		ethernet0 = &axi_ethernet;
 		serial0 = &uart0;
 	};
@@ -38,10 +38,6 @@
 
 		opensbi: sbi@80000000 {
 			reg = <0x80000000 0x00040000>;
-		};
-		
-		framebuffer: vga@87000000 {
-			reg = <0x87000000 0x400000>;
 		};
 	};
 };
